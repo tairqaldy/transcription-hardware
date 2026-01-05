@@ -26,6 +26,17 @@ type NoteRow = {
   title: string | null;
   content: string | null;
   duration: string | null;
+  device_id: string | null;
+  user_id: string;
+};
+
+type SummaryRow = {
+  id: string;
+  note_id: string;
+  device_id: string | null;
+  user_id: string;
+  content: string | null;
+  summary_type: string;
 };
 
 interface Note {
@@ -34,6 +45,8 @@ interface Note {
   content: string;
   timestamp: Date;
   duration: string;
+  deviceId: string | null;
+  summary: string | null;
 }
 
 function formatDuration(seconds: number) {
@@ -49,39 +62,97 @@ function rowToNote(row: NoteRow): Note {
     content: row.content ?? "",
     timestamp: new Date(row.created_at),
     duration: row.duration ?? "00:00",
+    deviceId: row.device_id ?? null,
+    summary: null,
   };
+}
+
+/**
+ * TEMP summariser so UI works before device/AI is connected.
+ * Replace later with Edge Function / backend endpoint.
+ */
+async function summarizeWithAI(transcript: string): Promise<string> {
+  const t = transcript.trim();
+  if (!t) return "No transcript text available.";
+  return t.slice(0, 420) + (t.length > 420 ? "…" : "");
 }
 
 export function Dashboard() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingDuration, setRecordingDuration] = useState(0);
-  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
   const [notes, setNotes] = useState<Note[]>([]);
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
+
+  // ✅ KEY FIX: store only the selected note ID, and always derive the note from `notes`.
+  // This prevents stale selectedNote objects, and also makes the Summary button reliably show.
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const selectedNote = useMemo(
+    () => (selectedNoteId ? notes.find((n) => n.id === selectedNoteId) ?? null : null),
+    [selectedNoteId, notes]
+  );
+
+  const [noteTab, setNoteTab] = useState<"transcript" | "summary">("transcript");
+
+  const [summarising, setSummarising] = useState(false);
+  const [summariseError, setSummariseError] = useState<string | null>(null);
+
+  const getUserId = async (): Promise<string> => {
+    const { data, error } = await supabase.auth.getUser();
+    if (error) throw new Error(error.message);
+    if (!data.user?.id) throw new Error("Not authenticated");
+    return data.user.id;
+  };
 
   // Fetch notes
   const loadNotes = async () => {
     setNotesError(null);
     setLoadingNotes(true);
 
-   const { data, error } = await supabase
-  .from("notes")
-  .select("id, created_at, title, content, duration")
-  .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-  .order("created_at", { ascending: false });
+    try {
+      const userId = await getUserId();
 
-    if (error) {
-      console.error(error);
-      setNotesError(error.message);
+      const { data: noteRows, error: noteErr } = await supabase
+        .from("notes")
+        .select("id, created_at, title, content, duration, device_id, user_id")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false });
+
+      if (noteErr) throw new Error(noteErr.message);
+
+      const baseNotes = (noteRows ?? []).map(rowToNote);
+      const noteIds = baseNotes.map((n) => n.id);
+
+      const summariesMap = new Map<string, string>();
+
+      if (noteIds.length > 0) {
+        const { data: sumRows, error: sumErr } = await supabase
+          .from("summaries")
+          .select("id, note_id, user_id, device_id, content, summary_type")
+          .eq("user_id", userId)
+          .in("note_id", noteIds);
+
+        if (sumErr) throw new Error(sumErr.message);
+
+        (sumRows ?? []).forEach((s: SummaryRow) => {
+          if (s.note_id && s.content) summariesMap.set(s.note_id, s.content);
+        });
+      }
+
+      setNotes(
+        baseNotes.map((n) => ({
+          ...n,
+          summary: summariesMap.get(n.id) ?? null,
+        }))
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load notes";
+      setNotesError(msg);
       setNotes([]);
+    } finally {
       setLoadingNotes(false);
-      return;
     }
-
-    setNotes((data ?? []).map(rowToNote));
-    setLoadingNotes(false);
   };
 
   useEffect(() => {
@@ -105,12 +176,16 @@ export function Dashboard() {
   }, [recordingState]);
 
   const createNoteInSupabase = async (payload: { title: string; content: string; duration: string }) => {
-  const { error } = await supabase.from("notes").insert({
-  title: payload.title,
-  content: payload.content,
-  duration: payload.duration,
-  text: payload.content, // ✅ REQUIRED (because text is NOT NULL in DB)
-});
+    const userId = await getUserId();
+
+    const { error } = await supabase.from("notes").insert({
+      user_id: userId,
+      title: payload.title,
+      content: payload.content,
+      duration: payload.duration,
+      text: payload.content, // ✅ REQUIRED (because text is NOT NULL in DB)
+      device_id: null,
+    });
 
     if (error) {
       console.error(error);
@@ -165,8 +240,58 @@ export function Dashboard() {
       return;
     }
 
-    setSelectedNote(null);
+    setSelectedNoteId(null);
     await loadNotes();
+  };
+
+  const summariseNoteById = async (noteId: string) => {
+    setSummariseError(null);
+    setSummarising(true);
+
+    try {
+      const userId = await getUserId();
+      const note = notes.find((n) => n.id === noteId);
+      if (!note) throw new Error("Note not found");
+
+      const summaryText = await summarizeWithAI(note.content);
+
+      const { data: existing, error: existErr } = await supabase
+        .from("summaries")
+        .select("id")
+        .eq("note_id", noteId)
+        .eq("user_id", userId)
+        .maybeSingle();
+
+      if (existErr) throw new Error(existErr.message);
+
+      if (existing?.id) {
+        const { error: updErr } = await supabase
+          .from("summaries")
+          .update({ content: summaryText, summary_type: "ai" })
+          .eq("id", existing.id);
+
+        if (updErr) throw new Error(updErr.message);
+      } else {
+        const { error: insErr } = await supabase.from("summaries").insert({
+          note_id: noteId,
+          user_id: userId,
+          device_id: note.deviceId ?? null,
+          content: summaryText,
+          summary_type: "ai",
+        });
+
+        if (insErr) throw new Error(insErr.message);
+      }
+
+      // ✅ instant UI update (so the Summary tab + label appears immediately)
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, summary: summaryText } : n)));
+      setNoteTab("summary");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Summarisation failed";
+      setSummariseError(msg);
+    } finally {
+      setSummarising(false);
+    }
   };
 
   const stateConfig = useMemo(() => {
@@ -215,6 +340,7 @@ export function Dashboard() {
   }, [recordingState]);
 
   const StateIcon = stateConfig.icon;
+  const hasSummary = !!selectedNote?.summary?.trim();
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-[var(--color-neutral-50)]">
@@ -455,11 +581,7 @@ export function Dashboard() {
                 </div>
               )}
 
-              {notesError && !loadingNotes && (
-                <div className="text-sm text-red-600">
-                  Could not load notes: {notesError}
-                </div>
-              )}
+              {notesError && !loadingNotes && <div className="text-sm text-red-600">Could not load notes: {notesError}</div>}
 
               {!loadingNotes && !notesError && (
                 <>
@@ -472,22 +594,52 @@ export function Dashboard() {
                           animate={{ opacity: 1, x: 0 }}
                           exit={{ opacity: 0, x: -20 }}
                           transition={{ delay: index * 0.06 }}
-                          onClick={() => setSelectedNote(note)}
                           className="group p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 hover:from-stone-100 hover:to-stone-50 cursor-pointer transition-all border border-stone-200/50 hover:border-stone-300 hover:shadow-lg"
                         >
-                          <div className="flex items-start justify-between gap-2 mb-2">
-                            <h4 className="text-stone-900 line-clamp-1 group-hover:text-[var(--color-coral)] transition-colors">
-                              {note.title}
-                            </h4>
-                            <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-[var(--color-coral)] group-hover:translate-x-1 transition-all flex-shrink-0" />
-                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedNoteId(note.id);
+                              setNoteTab(note.summary ? "summary" : "transcript");
+                              setSummariseError(null);
+                            }}
+                            className="w-full text-left"
+                          >
+                            <div className="flex items-start justify-between gap-2 mb-2">
+                              <h4 className="text-stone-900 line-clamp-1 group-hover:text-[var(--color-coral)] transition-colors">
+                                {note.title}
+                              </h4>
+                              <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-[var(--color-coral)] group-hover:translate-x-1 transition-all flex-shrink-0" />
+                            </div>
 
-                          <p className="text-sm text-stone-600 line-clamp-2 mb-3">{note.content}</p>
+                            <p className="text-sm text-stone-600 line-clamp-2 mb-3">
+                              {note.summary?.trim() ? note.summary : note.content}
+                            </p>
 
-                          <div className="flex items-center gap-3 text-xs text-stone-500">
-                            <span className="font-mono bg-stone-200/50 px-2 py-0.5 rounded">{note.duration}</span>
-                            <span>•</span>
-                            <span>{note.timestamp.toLocaleDateString()}</span>
+                            <div className="flex items-center gap-3 text-xs text-stone-500">
+                              <span className="font-mono bg-stone-200/50 px-2 py-0.5 rounded">{note.duration}</span>
+                              <span>•</span>
+                              <span>{note.timestamp.toLocaleDateString()}</span>
+                              {note.summary && (
+                                <>
+                                  <span>•</span>
+                                  <span className="text-emerald-600 font-medium">Summarised</span>
+                                </>
+                              )}
+                            </div>
+                          </button>
+
+                          {/* ✅ Optional: a tiny summary button right on the card (always shows) */}
+                          <div className="mt-3">
+                            <button
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void summariseNoteById(note.id);
+                              }}
+                              disabled={summarising || !note.content.trim()}
+                              className="w-full py-2 px-3 rounded-lg bg-white border border-stone-200 text-sm font-medium text-stone-800 hover:bg-stone-50 disabled:opacity-60"
+                            >
+                              {summarising ? "Summarising…" : "Summarise"}
+                            </button>
                           </div>
                         </motion.div>
                       ))}
@@ -518,7 +670,7 @@ export function Dashboard() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-            onClick={() => setSelectedNote(null)}
+            onClick={() => setSelectedNoteId(null)}
           >
             <motion.div
               initial={{ scale: 0.9, opacity: 0 }}
@@ -539,7 +691,7 @@ export function Dashboard() {
                 </div>
 
                 <button
-                  onClick={() => setSelectedNote(null)}
+                  onClick={() => setSelectedNoteId(null)}
                   className="p-2 hover:bg-stone-100 rounded-xl transition-colors"
                   aria-label="Close"
                 >
@@ -547,15 +699,57 @@ export function Dashboard() {
                 </button>
               </div>
 
-              <p className="text-stone-700 leading-relaxed whitespace-pre-wrap">{selectedNote.content}</p>
+              {/* ✅ Tabs always show */}
+              <div className="flex flex-wrap gap-2 mb-4">
+                <button
+                  onClick={() => setNoteTab("transcript")}
+                  className={[
+                    "px-4 py-2 rounded-full text-sm font-medium transition",
+                    noteTab === "transcript"
+                      ? "bg-stone-900 text-white"
+                      : "bg-stone-100 text-stone-700 hover:bg-stone-200",
+                  ].join(" ")}
+                >
+                  Transcript
+                </button>
 
-              <div className="mt-8 flex gap-3">
-                <button className="flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white font-medium glow-on-hover">
-                  Edit Note
+                <button
+                  onClick={() => setNoteTab("summary")}
+                  className={[
+                    "px-4 py-2 rounded-full text-sm font-medium transition",
+                    noteTab === "summary" ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200",
+                  ].join(" ")}
+                >
+                  Summary
                 </button>
-                <button className="py-3 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-medium transition-all">
-                  Share
+              </div>
+
+              {noteTab === "transcript" && (
+                <p className="text-stone-700 leading-relaxed whitespace-pre-wrap">{selectedNote.content}</p>
+              )}
+
+              {noteTab === "summary" && (
+                <div className="text-stone-700 leading-relaxed whitespace-pre-wrap">
+                  {selectedNote.summary?.trim() ? (
+                    selectedNote.summary
+                  ) : (
+                    <div className="text-stone-500">
+                      No summary yet. Click <span className="font-medium text-stone-900">Summarise</span> to generate one.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ✅ Summary button always shows (not conditional) */}
+              <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={() => void summariseNoteById(selectedNote.id)}
+                  disabled={summarising || !selectedNote.content.trim()}
+                  className="sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white font-medium disabled:opacity-60"
+                >
+                  {summarising ? "Summarising…" : "Summarise"}
                 </button>
+
                 <button
                   onClick={deleteSelectedNote}
                   className="py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-all"
@@ -563,6 +757,8 @@ export function Dashboard() {
                   Delete
                 </button>
               </div>
+
+              {summariseError && <div className="mt-3 text-sm text-red-600">{summariseError}</div>}
             </motion.div>
           </motion.div>
         )}
