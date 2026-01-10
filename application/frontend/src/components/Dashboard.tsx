@@ -16,8 +16,17 @@ import {
   Zap,
   X,
 } from "lucide-react";
+import { supabase } from "../lib/supabase";
 
 type RecordingState = "idle" | "recording" | "processing" | "complete" | "error";
+
+type NoteRow = {
+  id: string;
+  created_at: string; // timestamptz
+  title: string | null;
+  content: string | null;
+  duration: string | null;
+};
 
 interface Note {
   id: string;
@@ -27,30 +36,60 @@ interface Note {
   duration: string;
 }
 
+function formatDuration(seconds: number) {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+function rowToNote(row: NoteRow): Note {
+  return {
+    id: row.id,
+    title: row.title ?? "Untitled",
+    content: row.content ?? "",
+    timestamp: new Date(row.created_at),
+    duration: row.duration ?? "00:00",
+  };
+}
+
 export function Dashboard() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
-  const [notes, setNotes] = useState<Note[]>([
-    {
-      id: "1",
-      title: "Marketing Strategy Meeting",
-      content:
-        "Discussed Q1 goals, social media campaigns, and budget allocation for upcoming product launch. Key decisions made: increase Instagram budget by 20%, launch new TikTok campaign in March, focus on video content creation. Action items: Sarah to create content calendar, John to review analytics dashboard, Team to brainstorm influencer partnerships. Budget approved for Q1 digital marketing initiatives. Next meeting scheduled for February 15th to review campaign performance metrics.",
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      duration: "12:34",
-    },
-    {
-      id: "2",
-      title: "Lecture Notes: Cognitive Psychology",
-      content:
-        "Working memory models, Baddeley & Hitch theory, phonological loop, visuospatial sketchpad. The central executive controls attention and coordinates the slave systems. Phonological loop handles verbal and acoustic information through rehearsal. Visuospatial sketchpad processes visual and spatial information. Episodic buffer integrates information across domains with a limited capacity. Evidence from dual-task studies shows separate systems. Brain imaging reveals distinct neural correlates for each component.",
-      timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000),
-      duration: "45:12",
-    },
-  ]);
+  const [notes, setNotes] = useState<Note[]>([]);
+  const [loadingNotes, setLoadingNotes] = useState(true);
+  const [notesError, setNotesError] = useState<string | null>(null);
 
+  // Fetch notes
+  const loadNotes = async () => {
+    setNotesError(null);
+    setLoadingNotes(true);
+
+   const { data, error } = await supabase
+  .from("notes")
+  .select("id, created_at, title, content, duration")
+  .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
+  .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      setNotesError(error.message);
+      setNotes([]);
+      setLoadingNotes(false);
+      return;
+    }
+
+    setNotes((data ?? []).map(rowToNote));
+    setLoadingNotes(false);
+  };
+
+  useEffect(() => {
+    void loadNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recording timer
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
 
@@ -65,13 +104,21 @@ export function Dashboard() {
     };
   }, [recordingState]);
 
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  const createNoteInSupabase = async (payload: { title: string; content: string; duration: string }) => {
+  const { error } = await supabase.from("notes").insert({
+  title: payload.title,
+  content: payload.content,
+  duration: payload.duration,
+  text: payload.content, // ✅ REQUIRED (because text is NOT NULL in DB)
+});
+
+    if (error) {
+      console.error(error);
+      throw new Error(error.message);
+    }
   };
 
-  const handleRecordingAction = () => {
+  const handleRecordingAction = async () => {
     if (recordingState === "idle") {
       setRecordingState("recording");
       return;
@@ -80,22 +127,46 @@ export function Dashboard() {
     if (recordingState === "recording") {
       setRecordingState("processing");
 
-      setTimeout(() => {
-        setRecordingState("complete");
+      // Simulate processing like before (keep your UI flow)
+      setTimeout(async () => {
+        try {
+          const duration = formatDuration(recordingDuration);
 
-        const newNote: Note = {
-          id: Date.now().toString(),
-          title: "New Recording",
-          content:
-            "Your recording has been transcribed and is ready to review. This is a sample transcription that demonstrates how your voice notes will appear once processed by our AI system. You can search, edit, and organize all your transcribed notes from the dashboard.",
-          timestamp: new Date(),
-          duration: formatDuration(recordingDuration),
-        };
+          await createNoteInSupabase({
+            title: "New Recording",
+            content:
+              "Your recording has been transcribed and is ready to review. (This is placeholder text until your real transcription flow is connected.)",
+            duration,
+          });
 
-        setNotes((prev) => [newNote, ...prev]);
-        setTimeout(() => setRecordingState("idle"), 2000);
+          setRecordingState("complete");
+          await loadNotes();
+
+          setTimeout(() => setRecordingState("idle"), 2000);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Failed to save note";
+          alert("Error: " + msg);
+          setRecordingState("error");
+          setTimeout(() => setRecordingState("idle"), 2000);
+        }
       }, 2000);
     }
+  };
+
+  const deleteSelectedNote = async () => {
+    if (!selectedNote) return;
+
+    const id = selectedNote.id;
+    const { error } = await supabase.from("notes").delete().eq("id", id);
+
+    if (error) {
+      console.error(error);
+      alert("Error deleting note: " + error.message);
+      return;
+    }
+
+    setSelectedNote(null);
+    await loadNotes();
   };
 
   const stateConfig = useMemo(() => {
@@ -122,7 +193,7 @@ export function Dashboard() {
           label: "Complete",
           color: "from-emerald-500 to-green-600",
           message: "Note saved successfully!",
-          subMessage: "Your recording has been transcribed",
+          subMessage: "Your recording has been saved",
         };
       case "error":
         return {
@@ -306,7 +377,9 @@ export function Dashboard() {
                     </div>
                     <div className="flex items-center gap-3 text-stone-700 bg-white/80 backdrop-blur-sm px-6 py-3 rounded-full shadow-lg">
                       <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse" />
-                      <span className="text-3xl font-mono font-bold tabular-nums">{formatDuration(recordingDuration)}</span>
+                      <span className="text-3xl font-mono font-bold tabular-nums">
+                        {formatDuration(recordingDuration)}
+                      </span>
                     </div>
                   </motion.div>
                 )}
@@ -374,45 +447,63 @@ export function Dashboard() {
                 </div>
               </div>
 
-              <div className="space-y-3">
-                <AnimatePresence mode="popLayout">
-                  {notes.map((note, index) => (
-                    <motion.div
-                      key={note.id}
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      transition={{ delay: index * 0.06 }}
-                      onClick={() => setSelectedNote(note)}
-                      className="group p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 hover:from-stone-100 hover:to-stone-50 cursor-pointer transition-all border border-stone-200/50 hover:border-stone-300 hover:shadow-lg"
-                    >
-                      <div className="flex items-start justify-between gap-2 mb-2">
-                        <h4 className="text-stone-900 line-clamp-1 group-hover:text-[var(--color-coral)] transition-colors">
-                          {note.title}
-                        </h4>
-                        <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-[var(--color-coral)] group-hover:translate-x-1 transition-all flex-shrink-0" />
-                      </div>
-
-                      <p className="text-sm text-stone-600 line-clamp-2 mb-3">{note.content}</p>
-
-                      <div className="flex items-center gap-3 text-xs text-stone-500">
-                        <span className="font-mono bg-stone-200/50 px-2 py-0.5 rounded">{note.duration}</span>
-                        <span>•</span>
-                        <span>{note.timestamp.toLocaleDateString()}</span>
-                      </div>
-                    </motion.div>
-                  ))}
-                </AnimatePresence>
-              </div>
-
-              {notes.length === 0 && (
-                <div className="text-center py-12 text-stone-500">
-                  <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-stone-100 to-stone-200 flex items-center justify-center float-animation">
-                    <FileText className="w-10 h-10 text-stone-400" />
-                  </div>
-                  <p className="font-medium mb-1">No notes yet</p>
-                  <p className="text-xs">Start recording to create your first note</p>
+              {/* Loading / Error */}
+              {loadingNotes && (
+                <div className="text-sm text-stone-600 flex items-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Loading notes...
                 </div>
+              )}
+
+              {notesError && !loadingNotes && (
+                <div className="text-sm text-red-600">
+                  Could not load notes: {notesError}
+                </div>
+              )}
+
+              {!loadingNotes && !notesError && (
+                <>
+                  <div className="space-y-3">
+                    <AnimatePresence mode="popLayout">
+                      {notes.map((note, index) => (
+                        <motion.div
+                          key={note.id}
+                          initial={{ opacity: 0, x: 20 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          exit={{ opacity: 0, x: -20 }}
+                          transition={{ delay: index * 0.06 }}
+                          onClick={() => setSelectedNote(note)}
+                          className="group p-4 rounded-xl bg-gradient-to-br from-stone-50 to-stone-100/50 hover:from-stone-100 hover:to-stone-50 cursor-pointer transition-all border border-stone-200/50 hover:border-stone-300 hover:shadow-lg"
+                        >
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <h4 className="text-stone-900 line-clamp-1 group-hover:text-[var(--color-coral)] transition-colors">
+                              {note.title}
+                            </h4>
+                            <ChevronRight className="w-4 h-4 text-stone-400 group-hover:text-[var(--color-coral)] group-hover:translate-x-1 transition-all flex-shrink-0" />
+                          </div>
+
+                          <p className="text-sm text-stone-600 line-clamp-2 mb-3">{note.content}</p>
+
+                          <div className="flex items-center gap-3 text-xs text-stone-500">
+                            <span className="font-mono bg-stone-200/50 px-2 py-0.5 rounded">{note.duration}</span>
+                            <span>•</span>
+                            <span>{note.timestamp.toLocaleDateString()}</span>
+                          </div>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+
+                  {notes.length === 0 && (
+                    <div className="text-center py-12 text-stone-500">
+                      <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-gradient-to-br from-stone-100 to-stone-200 flex items-center justify-center float-animation">
+                        <FileText className="w-10 h-10 text-stone-400" />
+                      </div>
+                      <p className="font-medium mb-1">No notes yet</p>
+                      <p className="text-xs">Start recording to create your first note</p>
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           </div>
@@ -465,7 +556,10 @@ export function Dashboard() {
                 <button className="py-3 px-4 rounded-xl bg-stone-100 hover:bg-stone-200 text-stone-700 font-medium transition-all">
                   Share
                 </button>
-                <button className="py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-all">
+                <button
+                  onClick={deleteSelectedNote}
+                  className="py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-all"
+                >
                   Delete
                 </button>
               </div>

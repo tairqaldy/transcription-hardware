@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Settings as SettingsIcon,
@@ -13,6 +13,7 @@ import {
   Power,
   Signal,
 } from "lucide-react";
+import { supabase } from "../lib/supabase";
 
 type ConnectionStatus = "connected" | "disconnected" | "connecting";
 
@@ -20,10 +21,83 @@ export function Settings() {
   const [darkMode, setDarkMode] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
+
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const [batteryLevel] = useState(87);
   const [connectionStatus] = useState<ConnectionStatus>("connected");
 
-  const handleDeleteAllNotes = () => {
+  // --- Dark mode: persist per logged-in user (frontend only) ---
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+
+      const uid = data.user?.id ?? "anonymous";
+      const key = `settings:darkMode:${uid}`;
+      const saved = localStorage.getItem(key);
+
+      if (saved === "true") setDarkMode(true);
+      if (saved === "false") setDarkMode(false);
+    });
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!mounted) return;
+      const uid = data.user?.id ?? "anonymous";
+      const key = `settings:darkMode:${uid}`;
+      localStorage.setItem(key, String(darkMode));
+    });
+
+    // optional: apply a class to html for real dark theme later
+    const root = document.documentElement;
+    if (darkMode) root.classList.add("dark");
+    else root.classList.remove("dark");
+
+    return () => {
+      mounted = false;
+    };
+  }, [darkMode]);
+
+  // --- Delete notes: real Supabase call (frontend) ---
+  const handleDeleteAllNotes = async () => {
+    setDeleteError(null);
+    setDeleteLoading(true);
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setDeleteLoading(false);
+      setDeleteError("You must be logged in to delete notes.");
+      return;
+    }
+
+    // IMPORTANT:
+    // This assumes you have a 'notes' table with a 'user_id' column.
+    // If your table is different, tell me the real table name and I’ll adjust.
+    const { error } = await supabase.from("notes").delete().eq("user_id", user.id);
+
+    setDeleteLoading(false);
+
+    if (error) {
+      setDeleteError(
+        `Could not delete notes. (Maybe table name/columns differ or RLS blocks it): ${error.message}`
+      );
+      return;
+    }
+
     setDeleteSuccess(true);
     setDeleteConfirmOpen(false);
     setTimeout(() => setDeleteSuccess(false), 3000);
@@ -105,6 +179,13 @@ export function Settings() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Delete error */}
+        {deleteError && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+            {deleteError}
+          </div>
+        )}
 
         <div className="space-y-6">
           {/* Device Settings */}
@@ -263,7 +344,7 @@ export function Settings() {
                 </div>
 
                 <p className="text-sm text-stone-600">
-                  Switch between light and dark theme
+                  Switch between light and dark theme (saved for your account)
                 </p>
               </div>
             </div>
@@ -314,15 +395,17 @@ export function Settings() {
                     <button
                       onClick={() => setDeleteConfirmOpen(false)}
                       className="py-3 px-4 rounded-xl bg-white hover:bg-stone-100 border-2 border-stone-300 text-stone-700 font-medium transition-all"
+                      disabled={deleteLoading}
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleDeleteAllNotes}
-                      className="py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium transition-all flex items-center justify-center gap-2"
+                      disabled={deleteLoading}
+                      className="py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 text-white font-medium transition-all flex items-center justify-center gap-2 disabled:opacity-70"
                     >
                       <Trash2 className="w-4 h-4" />
-                      Yes, Delete
+                      {deleteLoading ? "Deleting..." : "Yes, Delete"}
                     </button>
                   </div>
                 </div>
