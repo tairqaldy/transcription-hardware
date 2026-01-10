@@ -8,6 +8,20 @@ from dotenv import load_dotenv
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 
+KEY_PATH = r"C:\Users\Francisco\Desktop\Work\Project 5\transcription-hardware\application\ai_model\google_key.json"
+
+if os.path.exists(KEY_PATH):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_PATH
+    print(f"✅ Key found and path set: {KEY_PATH}")
+else:
+    print(f"❌ ERROR: Key file not found at: {KEY_PATH}")
+    # Check if the folder exists at least
+    folder = os.path.dirname(KEY_PATH)
+    if os.path.exists(folder):
+        print(f"The folder exists. Files inside: {os.listdir(folder)}")
+    else:
+        print("The entire folder path seems incorrect.")
+
 # Load .env variables
 load_dotenv()
 
