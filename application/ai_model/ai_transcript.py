@@ -12,15 +12,9 @@ KEY_PATH = r"C:\Users\Francisco\Desktop\Work\Project 5\transcription-hardware\ap
 
 if os.path.exists(KEY_PATH):
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_PATH
-    print(f"✅ Key found and path set: {KEY_PATH}")
+    print(f"✅ Key found: {KEY_PATH}")
 else:
-    print(f"❌ ERROR: Key file not found at: {KEY_PATH}")
-    # Check if the folder exists at least
-    folder = os.path.dirname(KEY_PATH)
-    if os.path.exists(folder):
-        print(f"The folder exists. Files inside: {os.listdir(folder)}")
-    else:
-        print("The entire folder path seems incorrect.")
+    print(f"❌ ERROR: Key not found at {KEY_PATH}")
 
 # Load .env variables
 load_dotenv()
@@ -62,7 +56,7 @@ def transcribe_audio():
         config = cloud_speech.RecognitionConfig(
             auto_decoding_config=cloud_speech.AutoDetectDecodingConfig(),
             language_codes=LANGUAGES,
-            model="long", # Highest quality Chirp model
+            model="long", 
             features=cloud_speech.RecognitionFeatures(enable_automatic_punctuation=True),
         )
 
