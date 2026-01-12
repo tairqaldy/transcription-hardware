@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 
+
 KEY_PATH = r"C:\Users\Francisco\Desktop\Work\Project 5\transcription-hardware\application\ai_model\google_key.json"
 
 if os.path.exists(KEY_PATH):
@@ -24,7 +25,6 @@ PROJECT_ID = "project-93f4a126-e6c4-4f37-aab"
 REGION = "us-central1"
 RATE = 16000 
 LANGUAGES = ["en-US", "nl-NL", "de-DE"]
-
 recording_event = threading.Event()
 audio_data = [] # Stores audio samples
 
