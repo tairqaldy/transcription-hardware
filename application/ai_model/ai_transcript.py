@@ -8,22 +8,22 @@ from dotenv import load_dotenv
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 
-KEY_PATH = r"C:\Users\Francisco\Desktop\Work\Project 5\transcription-hardware\application\ai_model\google_key.json"
-
-if os.path.exists(KEY_PATH):
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_PATH
-    print(f"✅ Key found: {KEY_PATH}")
-else:
-    print(f"❌ ERROR: Key not found at {KEY_PATH}")
-
-# Load .env variables
+# 1. Load environment variables from .env file
 load_dotenv()
 
-# Configuration from your project
-PROJECT_ID = "project-93f4a126-e6c4-4f37-aab"
-REGION = "us-central1"
-RATE = 16000 
+# 2. Extract configurations from environment
+PROJECT_ID = os.getenv("GOOGLE_PROJECT_ID")
+REGION = os.getenv("GOOGLE_REGION", "us-central1")
+KEY_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+RATE = int(os.getenv("SAMPLING_RATE", 16000))
 LANGUAGES = ["en-US", "nl-NL", "de-DE"]
+
+# 3. Google Credentials Validation
+if KEY_PATH and os.path.exists(KEY_PATH):
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = KEY_PATH
+    print(f"✅ Credentials set from: {KEY_PATH}")
+else:
+    print(f"❌ ERROR: Google Credentials key not found. Check your .env file.")
 
 recording_event = threading.Event()
 audio_data = [] # Stores audio samples
