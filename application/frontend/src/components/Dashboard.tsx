@@ -36,6 +36,17 @@ interface Note {
   duration: string;
 }
 
+type DashboardProps = {
+  apiBaseUrl?: string;
+};
+
+type TranscriptionResult = {
+  text: string;
+  language?: string;
+  duration_seconds?: number;
+};
+
+
 function formatDuration(seconds: number) {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
@@ -52,7 +63,7 @@ function rowToNote(row: NoteRow): Note {
   };
 }
 
-export function Dashboard() {
+export function Dashboard({ apiBaseUrl }: DashboardProps) {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
@@ -61,16 +72,33 @@ export function Dashboard() {
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
 
+  const aiApiBaseUrl = apiBaseUrl ?? import.meta.env.VITE_AI_API_URL ?? "http://localhost:8000";
+
   // Fetch notes
   const loadNotes = async () => {
     setNotesError(null);
     setLoadingNotes(true);
 
-   const { data, error } = await supabase
-  .from("notes")
-  .select("id, created_at, title, content, duration")
-  .eq("user_id", (await supabase.auth.getUser()).data.user?.id)
-  .order("created_at", { ascending: false });
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError) {
+      console.error(userError);
+      setNotesError(userError.message);
+      setNotes([]);
+      setLoadingNotes(false);
+      return;
+    }
+
+    if (!userData.user) {
+      setNotes([]);
+      setLoadingNotes(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("notes")
+      .select("id, created_at, title, content, duration")
+      .eq("user_id", userData.user.id)
+      .order("created_at", { ascending: false });
 
     if (error) {
       console.error(error);
@@ -83,6 +111,7 @@ export function Dashboard() {
     setNotes((data ?? []).map(rowToNote));
     setLoadingNotes(false);
   };
+
 
   useEffect(() => {
     void loadNotes();
@@ -104,13 +133,50 @@ export function Dashboard() {
     };
   }, [recordingState]);
 
+  const startBackendRecording = async () => {
+    const response = await fetch(`${aiApiBaseUrl}/record/start`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = typeof payload.error === "string" ? payload.error : "Failed to start recording";
+      throw new Error(message);
+    }
+  };
+
+  const stopBackendRecording = async (): Promise<TranscriptionResult> => {
+    const response = await fetch(`${aiApiBaseUrl}/record/stop`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = typeof payload.error === "string" ? payload.error : "Failed to stop recording";
+      throw new Error(message);
+    }
+
+    return {
+      text: typeof payload.text === "string" ? payload.text : "",
+      language: typeof payload.language === "string" ? payload.language : undefined,
+      duration_seconds: typeof payload.duration_seconds === "number" ? payload.duration_seconds : undefined,
+    };
+  };
+
   const createNoteInSupabase = async (payload: { title: string; content: string; duration: string }) => {
-  const { error } = await supabase.from("notes").insert({
-  title: payload.title,
-  content: payload.content,
-  duration: payload.duration,
-  text: payload.content, // ✅ REQUIRED (because text is NOT NULL in DB)
-});
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError) {
+      console.error(userError);
+      throw new Error(userError.message);
+    }
+
+    if (!userData.user) {
+      throw new Error("You must be logged in to save notes.");
+    }
+
+    const { error } = await supabase.from("notes").insert({
+      user_id: userData.user.id,
+      title: payload.title,
+      content: payload.content,
+      duration: payload.duration,
+      text: payload.content,
+    });
 
     if (error) {
       console.error(error);
@@ -118,40 +184,52 @@ export function Dashboard() {
     }
   };
 
+
   const handleRecordingAction = async () => {
     if (recordingState === "idle") {
-      setRecordingState("recording");
+      try {
+        await startBackendRecording();
+        setRecordingState("recording");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to start recording";
+        alert("Error: " + msg);
+        setRecordingState("error");
+        setTimeout(() => setRecordingState("idle"), 2000);
+      }
       return;
     }
 
     if (recordingState === "recording") {
       setRecordingState("processing");
+      const durationSeconds = recordingDuration;
 
-      // Simulate processing like before (keep your UI flow)
-      setTimeout(async () => {
-        try {
-          const duration = formatDuration(recordingDuration);
+      try {
+        const transcription = await stopBackendRecording();
+        const transcriptText = transcription.text.trim();
+        const title = transcriptText
+          ? transcriptText.split(/\s+/).slice(0, 6).join(" ")
+          : "New Recording";
+        const duration = formatDuration(transcription.duration_seconds ?? durationSeconds);
 
-          await createNoteInSupabase({
-            title: "New Recording",
-            content:
-              "Your recording has been transcribed and is ready to review. (This is placeholder text until your real transcription flow is connected.)",
-            duration,
-          });
+        await createNoteInSupabase({
+          title,
+          content: transcriptText || "Transcription was empty.",
+          duration,
+        });
 
-          setRecordingState("complete");
-          await loadNotes();
+        setRecordingState("complete");
+        await loadNotes();
 
-          setTimeout(() => setRecordingState("idle"), 2000);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "Failed to save note";
-          alert("Error: " + msg);
-          setRecordingState("error");
-          setTimeout(() => setRecordingState("idle"), 2000);
-        }
-      }, 2000);
+        setTimeout(() => setRecordingState("idle"), 2000);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to save note";
+        alert("Error: " + msg);
+        setRecordingState("error");
+        setTimeout(() => setRecordingState("idle"), 2000);
+      }
     }
   };
+
 
   const deleteSelectedNote = async () => {
     if (!selectedNote) return;
