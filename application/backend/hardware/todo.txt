@@ -1,1 +1,0 @@
-start working on backend implementation and supabase SQL Schemas. (waitlist, notes, users, summary, etc.)
