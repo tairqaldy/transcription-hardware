@@ -42,7 +42,7 @@ type SummaryRow = {
 interface Note {
   id: string;
   title: string;
-  content: string; // transcript
+  content: string;
   timestamp: Date;
   duration: string;
   deviceId: string | null;
@@ -67,10 +67,7 @@ function rowToNote(row: NoteRow): Note {
   };
 }
 
-/**
- * TEMP summariser so UI works before device/AI is connected.
- * Replace later with Edge Function / backend endpoint.
- */
+// TEMP summariser so UI works before device/AI is connected.
 async function summarizeWithAI(transcript: string): Promise<string> {
   const t = transcript.trim();
   if (!t) return "No transcript text available.";
@@ -85,11 +82,11 @@ export function Dashboard() {
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
 
-  // ✅ store only selected note id; derive note from `notes` so it’s never stale
+  // Store only id → derive note from notes so it’s never stale
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const selectedNote = useMemo<Note | null>(() => {
     if (!selectedNoteId) return null;
-    return notes.find((n: Note) => n.id === selectedNoteId) ?? null;
+    return notes.find((n) => n.id === selectedNoteId) ?? null;
   }, [selectedNoteId, notes]);
 
   const [noteTab, setNoteTab] = useState<"transcript" | "summary">("transcript");
@@ -120,7 +117,7 @@ export function Dashboard() {
       if (noteErr) throw new Error(noteErr.message);
 
       const baseNotes: Note[] = (noteRows ?? []).map((r: NoteRow) => rowToNote(r));
-      const noteIds: string[] = baseNotes.map((n: Note) => n.id);
+      const noteIds = baseNotes.map((n) => n.id);
 
       const summariesMap = new Map<string, string>();
 
@@ -139,7 +136,7 @@ export function Dashboard() {
       }
 
       setNotes(
-        baseNotes.map((n: Note) => ({
+        baseNotes.map((n) => ({
           ...n,
           summary: summariesMap.get(n.id) ?? null,
         }))
@@ -163,7 +160,7 @@ export function Dashboard() {
     let interval: ReturnType<typeof setInterval> | undefined;
 
     if (recordingState === "recording") {
-      interval = setInterval(() => setRecordingDuration((p: number) => p + 1), 1000);
+      interval = setInterval(() => setRecordingDuration((p) => p + 1), 1000);
     } else {
       setRecordingDuration(0);
     }
@@ -240,7 +237,7 @@ export function Dashboard() {
 
     try {
       const userId = await getUserId();
-      const note = notes.find((n: Note) => n.id === noteId);
+      const note = notes.find((n) => n.id === noteId);
       if (!note) throw new Error("Note not found");
 
       const summaryText = await summarizeWithAI(note.content);
@@ -273,8 +270,7 @@ export function Dashboard() {
         if (insErr) throw new Error(insErr.message);
       }
 
-      // ✅ instant UI update
-      setNotes((prev: Note[]) => prev.map((n: Note) => (n.id === noteId ? { ...n, summary: summaryText } : n)));
+      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, summary: summaryText } : n)));
       setNoteTab("summary");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Summarisation failed";
@@ -348,10 +344,10 @@ export function Dashboard() {
         />
       </div>
 
-      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 sm:py-8 relative z-10">
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-5 sm:py-8 relative z-10">
         {/* Stats */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 sm:mb-8">
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-stone-200/50">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-5 sm:mb-8">
+          <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-md border border-stone-200/50">
             <div className="flex items-center justify-between mb-3">
               <div className="p-3 bg-gradient-to-br from-[var(--color-peach)] to-[var(--color-coral)] rounded-xl">
                 <FileText className="w-5 h-5 text-white" />
@@ -362,7 +358,7 @@ export function Dashboard() {
             <div className="text-sm text-stone-600">Total Notes</div>
           </div>
 
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-stone-200/50">
+          <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-md border border-stone-200/50">
             <div className="flex items-center justify-between mb-3">
               <div className="p-3 bg-gradient-to-br from-stone-700 to-stone-800 rounded-xl">
                 <Clock className="w-5 h-5 text-white" />
@@ -373,7 +369,7 @@ export function Dashboard() {
             <div className="text-sm text-stone-600">This Week</div>
           </div>
 
-          <div className="bg-white rounded-2xl p-6 shadow-md border border-stone-200/50">
+          <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-md border border-stone-200/50">
             <div className="flex items-center justify-between mb-3">
               <div className="p-3 bg-gradient-to-br from-stone-600 to-stone-700 rounded-xl">
                 <Zap className="w-5 h-5 text-white" />
@@ -388,11 +384,11 @@ export function Dashboard() {
           </div>
         </div>
 
-        {/* Layout */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Layout: mobile-first 1 col, desktop becomes 3 cols */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-6">
           {/* Recording */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-3xl p-8 sm:p-12 shadow-2xl border border-stone-200/50">
+          <div className="lg:col-span-2 space-y-5 sm:space-y-6">
+            <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-2xl border border-stone-200/50">
               <div className="flex flex-col items-center text-center">
                 <h2 className="text-stone-900 mb-2">{stateConfig.message}</h2>
                 <p className="text-stone-600 mb-6">{stateConfig.subMessage}</p>
@@ -401,7 +397,8 @@ export function Dashboard() {
                   onClick={handleRecordingAction}
                   disabled={recordingState === "processing" || recordingState === "complete"}
                   className={[
-                    "relative w-32 h-32 sm:w-44 sm:h-44 rounded-full",
+                    "relative rounded-full",
+                    "w-28 h-28 sm:w-44 sm:h-44", // nicer for phones
                     `bg-gradient-to-br ${stateConfig.color}`,
                     "text-white shadow-2xl transition-all duration-300",
                     "disabled:opacity-70 disabled:cursor-not-allowed",
@@ -412,25 +409,26 @@ export function Dashboard() {
                   <div className="absolute inset-0 rounded-full bg-white/10 backdrop-blur-sm" />
                   <StateIcon
                     className={[
-                      "w-14 h-14 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+                      "absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2",
+                      "w-12 h-12 sm:w-14 sm:h-14",
                       recordingState === "processing" ? "animate-spin" : "",
                     ].join(" ")}
                   />
                 </motion.button>
 
                 {recordingState === "recording" && (
-                  <div className="mt-6 text-stone-700 font-mono text-2xl">
+                  <div className="mt-5 text-stone-700 font-mono text-xl sm:text-2xl">
                     {formatDuration(recordingDuration)}
                   </div>
                 )}
 
-                <div className="mt-6 text-stone-600 font-medium">{stateConfig.label}</div>
+                <div className="mt-5 text-stone-600 font-medium">{stateConfig.label}</div>
               </div>
             </div>
 
             {/* Device status */}
-            <div className="bg-gradient-to-br from-stone-900 to-stone-800 rounded-2xl p-6 shadow-xl text-white">
-              <div className="flex items-center justify-between mb-6">
+            <div className="bg-gradient-to-br from-stone-900 to-stone-800 rounded-2xl p-5 sm:p-6 shadow-xl text-white">
+              <div className="flex items-center justify-between mb-5 sm:mb-6">
                 <h3 className="text-white">Device Status</h3>
                 <div className="flex items-center gap-2 text-sm bg-emerald-500/20 px-3 py-1.5 rounded-full border border-emerald-500/30">
                   <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -438,21 +436,21 @@ export function Dashboard() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div className="bg-white/10 rounded-xl p-4 border border-white/20">
-                  <Battery className="w-6 h-6 text-emerald-400 mb-3" />
-                  <div className="text-2xl font-bold mb-1">87%</div>
-                  <div className="text-xs text-white/70">Battery</div>
+              <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                <div className="bg-white/10 rounded-xl p-3 sm:p-4 border border-white/20">
+                  <Battery className="w-6 h-6 text-emerald-400 mb-2 sm:mb-3" />
+                  <div className="text-xl sm:text-2xl font-bold mb-1">87%</div>
+                  <div className="text-[11px] sm:text-xs text-white/70">Battery</div>
                 </div>
-                <div className="bg-white/10 rounded-xl p-4 border border-white/20">
-                  <Bluetooth className="w-6 h-6 text-blue-400 mb-3" />
-                  <div className="text-2xl font-bold mb-1">5.2</div>
-                  <div className="text-xs text-white/70">Bluetooth</div>
+                <div className="bg-white/10 rounded-xl p-3 sm:p-4 border border-white/20">
+                  <Bluetooth className="w-6 h-6 text-blue-400 mb-2 sm:mb-3" />
+                  <div className="text-xl sm:text-2xl font-bold mb-1">5.2</div>
+                  <div className="text-[11px] sm:text-xs text-white/70">Bluetooth</div>
                 </div>
-                <div className="bg-white/10 rounded-xl p-4 border border-white/20">
-                  <FileText className="w-6 h-6 text-[var(--color-coral)] mb-3" />
-                  <div className="text-2xl font-bold mb-1">{notes.length}</div>
-                  <div className="text-xs text-white/70">Notes</div>
+                <div className="bg-white/10 rounded-xl p-3 sm:p-4 border border-white/20">
+                  <FileText className="w-6 h-6 text-[var(--color-coral)] mb-2 sm:mb-3" />
+                  <div className="text-xl sm:text-2xl font-bold mb-1">{notes.length}</div>
+                  <div className="text-[11px] sm:text-xs text-white/70">Notes</div>
                 </div>
               </div>
             </div>
@@ -460,8 +458,9 @@ export function Dashboard() {
 
           {/* Recent notes */}
           <div className="lg:col-span-1">
-            <div className="bg-white rounded-2xl p-6 shadow-xl border border-stone-200/50 lg:sticky lg:top-24">
-              <div className="flex items-center justify-between mb-6">
+            {/* On mobile: normal flow. On desktop: sticky sidebar */}
+            <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-xl border border-stone-200/50 lg:sticky lg:top-24">
+              <div className="flex items-center justify-between mb-5 sm:mb-6">
                 <h3 className="text-stone-900">Recent Notes</h3>
                 <div className="px-3 py-1 bg-gradient-to-r from-[var(--color-peach)]/10 to-[var(--color-coral)]/10 rounded-full">
                   <span className="text-sm font-medium text-[var(--color-coral)]">{notes.length}</span>
@@ -480,13 +479,13 @@ export function Dashboard() {
               {!loadingNotes && !notesError && (
                 <>
                   <div className="space-y-3">
-                    {notes.map((note: Note, index: number) => (
+                    {notes.map((note, index) => (
                       <motion.div
                         key={note.id}
-                        initial={{ opacity: 0, x: 20 }}
+                        initial={{ opacity: 0, x: 14 }}
                         animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: index * 0.05 }}
-                        className="p-4 rounded-xl bg-stone-50 hover:bg-stone-100 transition border border-stone-200"
+                        transition={{ delay: index * 0.03 }}
+                        className="rounded-xl bg-stone-50 hover:bg-stone-100 transition border border-stone-200 overflow-hidden"
                       >
                         <button
                           onClick={() => {
@@ -494,7 +493,7 @@ export function Dashboard() {
                             setNoteTab(note.summary ? "summary" : "transcript");
                             setSummariseError(null);
                           }}
-                          className="w-full text-left group"
+                          className="w-full text-left p-4 group"
                         >
                           <div className="flex items-start justify-between gap-2 mb-2">
                             <h4 className="text-stone-900 line-clamp-1 group-hover:text-[var(--color-coral)] transition-colors">
@@ -511,7 +510,7 @@ export function Dashboard() {
                             <span className="font-mono bg-stone-200/50 px-2 py-0.5 rounded">{note.duration}</span>
                             <span>•</span>
                             <span>{note.timestamp.toLocaleDateString()}</span>
-                            {note.summary && (
+                            {note.summary?.trim() && (
                               <>
                                 <span>•</span>
                                 <span className="text-emerald-600 font-medium">Summarised</span>
@@ -520,14 +519,14 @@ export function Dashboard() {
                           </div>
                         </button>
 
-                        {/* Optional: quick summary button on card */}
-                        <div className="mt-3">
+                        {/* quick action row (good for phones too) */}
+                        <div className="px-4 pb-4">
                           <button
                             onClick={() => void summariseNoteById(note.id)}
                             disabled={summarising || !note.content.trim()}
-                            className="w-full py-2 px-3 rounded-lg bg-white border border-stone-200 text-sm font-medium text-stone-800 hover:bg-stone-50 disabled:opacity-60"
+                            className="w-full py-2.5 px-3 rounded-lg bg-white border border-stone-200 text-sm font-medium text-stone-800 hover:bg-stone-50 disabled:opacity-60"
                           >
-                            {summarising ? "Summarising…" : note.summary?.trim() ? "Summarise" : "Summarise"}
+                            {summarising ? "Summarising…" : note.summary?.trim() ? "Re-summarise" : "Summarise"}
                           </button>
                         </div>
                       </motion.div>
@@ -554,98 +553,111 @@ export function Dashboard() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4"
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4"
             onClick={() => setSelectedNoteId(null)}
           >
             <motion.div
-              initial={{ scale: 0.96, opacity: 0 }}
+              initial={{ scale: 0.98, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.96, opacity: 0 }}
+              exit={{ scale: 0.98, opacity: 0 }}
               transition={{ type: "spring", damping: 25 }}
-              className="bg-white rounded-3xl p-5 sm:p-8 max-w-2xl w-full max-h-[85vh] overflow-y-auto shadow-2xl"
               onClick={(e) => e.stopPropagation()}
+              className={[
+                "bg-white rounded-3xl shadow-2xl w-full",
+                "max-w-2xl",
+                "max-h-[92vh] sm:max-h-[85vh]",
+                "overflow-hidden", // important for sticky footer
+              ].join(" ")}
             >
-              <div className="flex items-start justify-between mb-4 gap-3">
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-stone-900 mb-2 truncate">{selectedNote.title}</h2>
-                  <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
-                    <span className="font-mono bg-stone-100 px-3 py-1 rounded-full">{selectedNote.duration}</span>
-                    <span className="hidden sm:inline">•</span>
-                    <span>{selectedNote.timestamp.toLocaleString()}</span>
-                  </div>
-                </div>
-
-                <button
-                  onClick={() => setSelectedNoteId(null)}
-                  className="p-2 hover:bg-stone-100 rounded-xl transition-colors"
-                  aria-label="Close"
-                >
-                  <X className="w-6 h-6 text-stone-600" />
-                </button>
-              </div>
-
-              {/* Tabs */}
-              <div className="flex flex-wrap gap-2 mb-4">
-                <button
-                  onClick={() => setNoteTab("transcript")}
-                  className={[
-                    "px-4 py-2 rounded-full text-sm font-medium transition",
-                    noteTab === "transcript"
-                      ? "bg-stone-900 text-white"
-                      : "bg-stone-100 text-stone-700 hover:bg-stone-200",
-                  ].join(" ")}
-                >
-                  Transcript
-                </button>
-
-                <button
-                  onClick={() => setNoteTab("summary")}
-                  className={[
-                    "px-4 py-2 rounded-full text-sm font-medium transition",
-                    noteTab === "summary"
-                      ? "bg-stone-900 text-white"
-                      : "bg-stone-100 text-stone-700 hover:bg-stone-200",
-                  ].join(" ")}
-                >
-                  Summary
-                </button>
-              </div>
-
-              {noteTab === "transcript" && (
-                <p className="text-stone-700 leading-relaxed whitespace-pre-wrap">{selectedNote.content}</p>
-              )}
-
-              {noteTab === "summary" && (
-                <div className="text-stone-700 leading-relaxed whitespace-pre-wrap">
-                  {selectedNote.summary?.trim() ? (
-                    selectedNote.summary
-                  ) : (
-                    <div className="text-stone-500">
-                      No summary yet. Click <span className="font-medium text-stone-900">Summarise</span> to generate one.
+              {/* Header */}
+              <div className="p-4 sm:p-8 pb-3 sm:pb-4 border-b border-stone-200/60">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <h2 className="text-stone-900 mb-2 truncate">{selectedNote.title}</h2>
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500">
+                      <span className="font-mono bg-stone-100 px-3 py-1 rounded-full">{selectedNote.duration}</span>
+                      <span className="hidden sm:inline">•</span>
+                      <span className="truncate">{selectedNote.timestamp.toLocaleString()}</span>
                     </div>
-                  )}
+                  </div>
+
+                  <button
+                    onClick={() => setSelectedNoteId(null)}
+                    className="p-2 hover:bg-stone-100 rounded-xl transition-colors"
+                    aria-label="Close"
+                  >
+                    <X className="w-6 h-6 text-stone-600" />
+                  </button>
                 </div>
-              )}
 
-              {/* ✅ Summarise button ALWAYS visible */}
-              <div className="mt-6 flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={() => void summariseNoteById(selectedNote.id)}
-                  disabled={summarising || !selectedNote.content.trim()}
-                  className="sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white font-medium disabled:opacity-60"
-                >
-                  {summarising ? "Summarising…" : "Summarise"}
-                </button>
+                {/* Tabs */}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setNoteTab("transcript")}
+                    className={[
+                      "px-4 py-2 rounded-full text-sm font-medium transition",
+                      noteTab === "transcript"
+                        ? "bg-stone-900 text-white"
+                        : "bg-stone-100 text-stone-700 hover:bg-stone-200",
+                    ].join(" ")}
+                  >
+                    Transcript
+                  </button>
 
-                <button
-                  onClick={() => void deleteSelectedNote()}
-                  className="py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-all"
-                >
-                  Delete
-                </button>
+                  <button
+                    onClick={() => setNoteTab("summary")}
+                    className={[
+                      "px-4 py-2 rounded-full text-sm font-medium transition",
+                      noteTab === "summary"
+                        ? "bg-stone-900 text-white"
+                        : "bg-stone-100 text-stone-700 hover:bg-stone-200",
+                    ].join(" ")}
+                  >
+                    Summary
+                  </button>
+                </div>
               </div>
 
-              {summariseError && <div className="mt-3 text-sm text-red-600">{summariseError}</div>}
+              {/* Scrollable body */}
+              <div className="px-4 sm:px-8 py-4 sm:py-5 overflow-y-auto max-h-[56vh] sm:max-h-[52vh]">
+                {noteTab === "transcript" && (
+                  <p className="text-stone-700 leading-relaxed whitespace-pre-wrap">{selectedNote.content}</p>
+                )}
+
+                {noteTab === "summary" && (
+                  <div className="text-stone-700 leading-relaxed whitespace-pre-wrap">
+                    {selectedNote.summary?.trim() ? (
+                      selectedNote.summary
+                    ) : (
+                      <div className="text-stone-500">
+                        No summary yet. Click <span className="font-medium text-stone-900">Summarise</span> to generate one.
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {summariseError && <div className="mt-3 text-sm text-red-600">{summariseError}</div>}
+              </div>
+
+              {/* Sticky actions (great for phones) */}
+              <div className="p-4 sm:p-8 pt-3 sm:pt-4 border-t border-stone-200/60 bg-white">
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <button
+                    onClick={() => void summariseNoteById(selectedNote.id)}
+                    disabled={summarising || !selectedNote.content.trim()}
+                    className="sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white font-medium disabled:opacity-60"
+                  >
+                    {summarising ? "Summarising…" : hasSummary ? "Re-summarise" : "Summarise"}
+                  </button>
+
+                  <button
+                    onClick={() => void deleteSelectedNote()}
+                    className="py-3 px-4 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 font-medium transition-all"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
             </motion.div>
           </motion.div>
         )}
