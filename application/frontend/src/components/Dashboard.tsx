@@ -85,13 +85,12 @@ export function Dashboard() {
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
 
-  // ✅ KEY FIX: store only the selected note ID, and always derive the note from `notes`.
-  // This prevents stale selectedNote objects, and also makes the Summary button reliably show.
+  // ✅ store only selected note id; derive note from `notes` so it’s never stale
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-  const selectedNote = useMemo(
-    () => (selectedNoteId ? notes.find((n) => n.id === selectedNoteId) ?? null : null),
-    [selectedNoteId, notes]
-  );
+  const selectedNote = useMemo<Note | null>(() => {
+    if (!selectedNoteId) return null;
+    return notes.find((n: Note) => n.id === selectedNoteId) ?? null;
+  }, [selectedNoteId, notes]);
 
   const [noteTab, setNoteTab] = useState<"transcript" | "summary">("transcript");
 
@@ -120,8 +119,8 @@ export function Dashboard() {
 
       if (noteErr) throw new Error(noteErr.message);
 
-      const baseNotes = (noteRows ?? []).map(rowToNote);
-      const noteIds = baseNotes.map((n) => n.id);
+      const baseNotes: Note[] = (noteRows ?? []).map((r: NoteRow) => rowToNote(r));
+      const noteIds: string[] = baseNotes.map((n: Note) => n.id);
 
       const summariesMap = new Map<string, string>();
 
@@ -140,7 +139,7 @@ export function Dashboard() {
       }
 
       setNotes(
-        baseNotes.map((n) => ({
+        baseNotes.map((n: Note) => ({
           ...n,
           summary: summariesMap.get(n.id) ?? null,
         }))
@@ -164,7 +163,7 @@ export function Dashboard() {
     let interval: ReturnType<typeof setInterval> | undefined;
 
     if (recordingState === "recording") {
-      interval = setInterval(() => setRecordingDuration((p) => p + 1), 1000);
+      interval = setInterval(() => setRecordingDuration((p: number) => p + 1), 1000);
     } else {
       setRecordingDuration(0);
     }
@@ -241,7 +240,7 @@ export function Dashboard() {
 
     try {
       const userId = await getUserId();
-      const note = notes.find((n) => n.id === noteId);
+      const note = notes.find((n: Note) => n.id === noteId);
       if (!note) throw new Error("Note not found");
 
       const summaryText = await summarizeWithAI(note.content);
@@ -274,8 +273,8 @@ export function Dashboard() {
         if (insErr) throw new Error(insErr.message);
       }
 
-      // ✅ instant UI update (so the Summary tab + label appears immediately)
-      setNotes((prev) => prev.map((n) => (n.id === noteId ? { ...n, summary: summaryText } : n)));
+      // ✅ instant UI update
+      setNotes((prev: Note[]) => prev.map((n: Note) => (n.id === noteId ? { ...n, summary: summaryText } : n)));
       setNoteTab("summary");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Summarisation failed";
@@ -481,7 +480,7 @@ export function Dashboard() {
               {!loadingNotes && !notesError && (
                 <>
                   <div className="space-y-3">
-                    {notes.map((note, index) => (
+                    {notes.map((note: Note, index: number) => (
                       <motion.div
                         key={note.id}
                         initial={{ opacity: 0, x: 20 }}
@@ -521,14 +520,14 @@ export function Dashboard() {
                           </div>
                         </button>
 
-                        {/* ✅ Optional: a tiny summary button right on the card (always shows) */}
+                        {/* Optional: quick summary button on card */}
                         <div className="mt-3">
                           <button
                             onClick={() => void summariseNoteById(note.id)}
                             disabled={summarising || !note.content.trim()}
                             className="w-full py-2 px-3 rounded-lg bg-white border border-stone-200 text-sm font-medium text-stone-800 hover:bg-stone-50 disabled:opacity-60"
                           >
-                            {summarising ? "Summarising…" : note.summary?.trim() ? "Re-summarise" : "Summarise"}
+                            {summarising ? "Summarising…" : note.summary?.trim() ? "Summarise" : "Summarise"}
                           </button>
                         </div>
                       </motion.div>
@@ -585,7 +584,7 @@ export function Dashboard() {
                 </button>
               </div>
 
-              {/* ✅ Tabs always show */}
+              {/* Tabs */}
               <div className="flex flex-wrap gap-2 mb-4">
                 <button
                   onClick={() => setNoteTab("transcript")}
@@ -603,7 +602,9 @@ export function Dashboard() {
                   onClick={() => setNoteTab("summary")}
                   className={[
                     "px-4 py-2 rounded-full text-sm font-medium transition",
-                    noteTab === "summary" ? "bg-stone-900 text-white" : "bg-stone-100 text-stone-700 hover:bg-stone-200",
+                    noteTab === "summary"
+                      ? "bg-stone-900 text-white"
+                      : "bg-stone-100 text-stone-700 hover:bg-stone-200",
                   ].join(" ")}
                 >
                   Summary
@@ -626,14 +627,14 @@ export function Dashboard() {
                 </div>
               )}
 
-              {/* ✅ Summary button always shows (not conditional) */}
+              {/* ✅ Summarise button ALWAYS visible */}
               <div className="mt-6 flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={() => void summariseNoteById(selectedNote.id)}
                   disabled={summarising || !selectedNote.content.trim()}
                   className="sm:flex-1 py-3 px-4 rounded-xl bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white font-medium disabled:opacity-60"
                 >
-                  {summarising ? "Summarising…" : hasSummary ? "Re-summarise" : "Summarise"}
+                  {summarising ? "Summarising…" : "Summarise"}
                 </button>
 
                 <button
