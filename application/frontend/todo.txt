@@ -1,0 +1,7 @@
+create a sitemap schema
+
+after that start making figma wireframes
+
+as supabase tables are done we can finish waitlist page
+
+then start coding and finish functionallity of website (auth, notes, real-time data etc.)
