@@ -49,9 +49,21 @@ interface Note {
   summary: string | null;
 }
 
+type DashboardProps = {
+  apiBaseUrl?: string;
+};
+
+type TranscriptionResult = {
+  text: string;
+  language?: string;
+  duration_seconds?: number;
+  title?: string;
+};
+
 function formatDuration(totalSeconds: number) {
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
+  const safeSeconds = Number.isFinite(totalSeconds) ? Math.max(0, Math.floor(totalSeconds)) : 0;
+  const mins = Math.floor(safeSeconds / 60);
+  const secs = safeSeconds % 60;
   return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
@@ -68,16 +80,55 @@ function rowToNote(row: NoteRow): Note {
 }
 
 /**
- * TEMP summariser so UI works before device/AI is connected.
- * Replace later with Edge Function / backend endpoint.
+ * Summariser via backend (Gemini key stays server-side).
  */
-async function summarizeWithAI(transcript: string): Promise<string> {
+async function summarizeWithAI(transcript: string, apiBaseUrl: string): Promise<string> {
   const t = transcript.trim();
   if (!t) return "No transcript text available.";
-  return t.slice(0, 420) + (t.length > 420 ? "…" : "");
+
+  const response = await fetch(`${apiBaseUrl}/summarize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript: t }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = typeof payload.error === "string" ? payload.error : "Summarisation failed";
+    throw new Error(message);
+  }
+
+  if (typeof payload.summary !== "string") {
+    throw new Error("Invalid summary response");
+  }
+
+  return payload.summary;
 }
 
-export function Dashboard() {
+async function generateTitleWithAI(transcript: string, apiBaseUrl: string): Promise<string> {
+  const t = transcript.trim();
+  if (!t) return "New Recording";
+
+  const response = await fetch(`${apiBaseUrl}/title`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transcript: t }),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = typeof payload.error === "string" ? payload.error : "Title generation failed";
+    throw new Error(message);
+  }
+
+  if (typeof payload.title !== "string") {
+    throw new Error("Invalid title response");
+  }
+
+  return payload.title;
+}
+
+export function Dashboard({ apiBaseUrl }: DashboardProps) {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [recordingDuration, setRecordingDuration] = useState(0);
 
@@ -97,6 +148,8 @@ export function Dashboard() {
 
   const [summarising, setSummarising] = useState(false);
   const [summariseError, setSummariseError] = useState<string | null>(null);
+
+  const aiApiBaseUrl = apiBaseUrl ?? import.meta.env.VITE_AI_API_URL ?? "http://localhost:8000";
 
   const getUserId = async (): Promise<string> => {
     const { data, error } = await supabase.auth.getUser();
@@ -198,6 +251,7 @@ export function Dashboard() {
       text: typeof payload.text === "string" ? payload.text : "",
       language: typeof payload.language === "string" ? payload.language : undefined,
       duration_seconds: typeof payload.duration_seconds === "number" ? payload.duration_seconds : undefined,
+      title: typeof payload.title === "string" ? payload.title : undefined,
     };
   };
 
@@ -215,8 +269,6 @@ export function Dashboard() {
 
     if (error) throw new Error(error.message);
   };
-
-
   const handleRecordingAction = async () => {
     if (recordingState === "idle") {
       try {
@@ -235,27 +287,37 @@ export function Dashboard() {
       setRecordingState("processing");
       const durationSeconds = recordingDuration;
 
-      setTimeout(async () => {
-        try {
-          const duration = formatDuration(recordingDuration);
-
-          await createNoteInSupabase({
-            title: "New Recording",
-            content:
-              "FULL TRANSCRIPT PLACEHOLDER: This will be the full transcribed text from the recording device once connected. For now, it simulates a real transcript so the UI flow (open note → view full text → summarise) works.",
-            duration,
-          });
-
-          setRecordingState("complete");
-          await loadNotes();
-          setTimeout(() => setRecordingState("idle"), 2000);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "Failed to save note";
-          alert("Error: " + msg);
-          setRecordingState("error");
-          setTimeout(() => setRecordingState("idle"), 2000);
+      try {
+        const transcription = await stopBackendRecording();
+        const transcriptText = transcription.text.trim();
+        let title = transcription.title?.trim() ?? "";
+        if (!title && transcriptText) {
+          try {
+            title = await generateTitleWithAI(transcriptText, aiApiBaseUrl);
+          } catch {
+            title = transcriptText.split(/\s+/).slice(0, 6).join(" ");
+          }
         }
-      }, 1200);
+        if (!title) {
+          title = "New Recording";
+        }
+        const duration = formatDuration(transcription.duration_seconds ?? durationSeconds);
+
+        await createNoteInSupabase({
+          title,
+          content: transcriptText || "Transcription was empty.",
+          duration,
+        });
+
+        setRecordingState("complete");
+        await loadNotes();
+        setTimeout(() => setRecordingState("idle"), 2000);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Failed to save note";
+        alert("Error: " + msg);
+        setRecordingState("error");
+        setTimeout(() => setRecordingState("idle"), 2000);
+      }
     }
   };
 
@@ -282,7 +344,7 @@ export function Dashboard() {
       const note = notes.find((n) => n.id === noteId);
       if (!note) throw new Error("Note not found");
 
-      const summaryText = await summarizeWithAI(note.content);
+      const summaryText = await summarizeWithAI(note.content, aiApiBaseUrl);
 
       const { data: existing, error: existErr } = await supabase
         .from("summaries")
