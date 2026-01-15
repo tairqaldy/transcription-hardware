@@ -1,5 +1,0 @@
-google-cloud-speech>=2.21.0
-sounddevice>=0.4.6
-scipy>=1.10.0
-numpy>=1.23.0
-python-dotenv>=1.0.0
