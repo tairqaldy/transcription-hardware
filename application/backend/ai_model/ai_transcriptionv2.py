@@ -46,7 +46,7 @@ SUMMARY_API_KEY = os.getenv("GOOGLE_SUMMARY_KEY") or os.getenv("GOOGLE_AI_API_KE
 SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "models/gemini-2.5-flash")
 SUMMARY_FALLBACK_MODEL = os.getenv("SUMMARY_FALLBACK_MODEL", "models/gemini-2.5-flash")
 SUMMARY_TEMPERATURE = float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))
-SUMMARY_MAX_OUTPUT_TOKENS = int(os.getenv("SUMMARY_MAX_OUTPUT_TOKENS", "1200"))
+SUMMARY_MAX_OUTPUT_TOKENS = int(os.getenv("SUMMARY_MAX_OUTPUT_TOKENS", "2000"))
 SUMMARY_CHUNK_CHARS = int(os.getenv("SUMMARY_CHUNK_CHARS", "12000"))
 TITLE_MODEL = os.getenv("TITLE_MODEL", SUMMARY_MODEL)
 TITLE_FALLBACK_MODEL = os.getenv("TITLE_FALLBACK_MODEL", SUMMARY_MODEL)
@@ -266,7 +266,7 @@ def summarize_transcript(transcript: str) -> str:
     if len(chunks) > 1:
         for idx, chunk in enumerate(chunks, start=1):
             chunk_prompt = (
-                "Write a short FeedPulse-style paragraph (3-5 sentences) that captures this section clearly. "
+                "Write a detailed FeedPulse-style paragraph (4-6 sentences) that captures this section clearly. "
                 "Use natural narrative sentences like the examples: context, discussion points, decisions, "
                 "responsibilities, challenges, and any numbers or dates. Preserve specific tools, components, "
                 "or features mentioned. Do not add labels, headings, bullets, or commentary.\\n\\n"
@@ -291,23 +291,23 @@ def summarize_transcript(transcript: str) -> str:
 
         combined = " ".join(chunk_summaries).strip()
         prompt = (
-            "Write a FeedPulse reflection in 2-4 paragraphs, similar in tone and structure to the examples. "
-            "Use natural, complete sentences and a cohesive narrative.\\n"
-            "Paragraph 1: brief intro about the meeting/session (context, purpose, overall tone).\\n"
-            "Paragraph 2: detailed discussion with concrete points, decisions, responsibilities, constraints, and "
-            "specific tools/components/features mentioned. Include any numbers, dates, or targets when present.\\n"
-            "Paragraph 3 (and optional 4): wrap up with key takeaways, challenges, and clear next steps.\\n"
+            "Write a detailed FeedPulse reflection in 3-5 paragraphs, similar in tone and structure to the examples. "
+            "Use natural, complete sentences and a cohesive narrative. Avoid being too short; include concrete detail.\\n"
+            "Paragraph 1: clear intro about the meeting/session (context, purpose, overall tone).\\n"
+            "Paragraph 2-3: detailed discussion with concrete points, decisions, responsibilities, constraints, and "
+            "specific tools/components/features mentioned. Include numbers, dates, and targets when present.\\n"
+            "Paragraph 4-5 (if needed): wrap up with key takeaways, challenges, and clear next steps.\\n"
             "Do not add labels, headings, bullets, or commentary. Avoid listing attendees unless essential.\\n\\n"
             f"Notes:\\n{combined}"
         )
     else:
         prompt = (
-            "Write a FeedPulse reflection in 2-4 paragraphs, similar in tone and structure to the examples. "
-            "Use natural, complete sentences and a cohesive narrative.\\n"
-            "Paragraph 1: brief intro about the meeting/session (context, purpose, overall tone).\\n"
-            "Paragraph 2: detailed discussion with concrete points, decisions, responsibilities, constraints, and "
-            "specific tools/components/features mentioned. Include any numbers, dates, or targets when present.\\n"
-            "Paragraph 3 (and optional 4): wrap up with key takeaways, challenges, and clear next steps.\\n"
+            "Write a detailed FeedPulse reflection in 3-5 paragraphs, similar in tone and structure to the examples. "
+            "Use natural, complete sentences and a cohesive narrative. Avoid being too short; include concrete detail.\\n"
+            "Paragraph 1: clear intro about the meeting/session (context, purpose, overall tone).\\n"
+            "Paragraph 2-3: detailed discussion with concrete points, decisions, responsibilities, constraints, and "
+            "specific tools/components/features mentioned. Include numbers, dates, and targets when present.\\n"
+            "Paragraph 4-5 (if needed): wrap up with key takeaways, challenges, and clear next steps.\\n"
             "Do not add labels, headings, bullets, or commentary. Avoid listing attendees unless essential.\\n\\n"
             f"Transcript:\\n{text}"
         )
