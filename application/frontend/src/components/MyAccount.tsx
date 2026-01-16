@@ -175,7 +175,7 @@ export function MyAccount() {
                     </div>
                     <div>
                       <div className="text-sm text-white/70">Device Model</div>
-                      <div className="font-semibold">NoteNecklace Pro</div>
+                      <div className="font-semibold">Automated recording device Pro</div>
                     </div>
                   </div>
                 </div>

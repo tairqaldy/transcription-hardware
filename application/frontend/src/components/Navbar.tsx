@@ -45,10 +45,9 @@ export function Navbar() {
 
   const closeMobile = () => setMobileOpen(false);
 
-  // ✅ Close mobile menu on route change (actual implementation)
+  
   useEffect(() => {
     closeMobile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
   useEffect(() => {
@@ -82,7 +81,6 @@ export function Navbar() {
 
     return () => {
       alive = false;
-      // ✅ safe unsubscribe
       data?.subscription?.unsubscribe();
     };
   }, []);
@@ -97,7 +95,6 @@ export function Navbar() {
       }
       navigate("/login", { replace: true });
     } finally {
-      // ✅ always close mobile menu even if something goes weird
       closeMobile();
     }
   };
@@ -111,7 +108,7 @@ export function Navbar() {
             <LayoutDashboard className="w-4 h-4 text-white" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="font-semibold text-lg text-stone-900">NoteNecklace</span>
+            <span className="font-semibold text-lg text-stone-900">Noting</span>
             {isAuthed && (
               <span className="text-xs text-stone-500 truncate max-w-[180px] sm:max-w-[240px]">
                 {email}
@@ -137,11 +134,6 @@ export function Navbar() {
               <NavLink to="/account" className={navClass}>
                 <User className="w-4 h-4" />
                 My Account
-              </NavLink>
-
-              <NavLink to="/settings" className={navClass}>
-                <Settings className="w-4 h-4" />
-                Settings
               </NavLink>
 
               <button
@@ -204,11 +196,6 @@ export function Navbar() {
                   <NavLink to="/account" className={mobileItemClass}>
                     <User className="w-4 h-4" />
                     My Account
-                  </NavLink>
-
-                  <NavLink to="/settings" className={mobileItemClass}>
-                    <Settings className="w-4 h-4" />
-                    Settings
                   </NavLink>
 
                   <button

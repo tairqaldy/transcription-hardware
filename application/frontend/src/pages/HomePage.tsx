@@ -76,13 +76,13 @@ useEffect(() => {
       {
         name: "Sarah Chen",
         content:
-          "NoteNecklace changed how I study. I focus on understanding lectures instead of writing nonstop.",
+          "This recording device changed how I study. I focus on understanding lectures instead of writing nonstop.",
         rating: 5,
       },
       {
         name: "Marcus Johnson",
         content:
-          "A game-changer for meetings. I never miss action items anymore.",
+          "A game changer for meetings. I never miss action items anymore.",
         rating: 5,
       },
       {

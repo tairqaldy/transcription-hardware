@@ -67,7 +67,6 @@ function rowToNote(row: NoteRow): Note {
   };
 }
 
-// TEMP summariser so UI works before device/AI is connected.
 async function summarizeWithAI(transcript: string): Promise<string> {
   const t = transcript.trim();
   if (!t) return "No transcript text available.";
@@ -82,7 +81,6 @@ export function Dashboard() {
   const [loadingNotes, setLoadingNotes] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
 
-  // Store only id → derive note from notes so it’s never stale
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const selectedNote = useMemo<Note | null>(() => {
     if (!selectedNoteId) return null;
@@ -152,10 +150,8 @@ export function Dashboard() {
 
   useEffect(() => {
     void loadNotes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Recording timer
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
 
