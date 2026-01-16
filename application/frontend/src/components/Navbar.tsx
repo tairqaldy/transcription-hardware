@@ -11,7 +11,7 @@ import {
   UserPlus,
   Menu,
   X,
-  Settings,
+
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 

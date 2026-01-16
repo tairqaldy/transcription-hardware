@@ -79,14 +79,10 @@ function rowToNote(row: NoteRow): Note {
   };
 }
 
-<<<<<<< HEAD
-async function summarizeWithAI(transcript: string): Promise<string> {
-=======
 /**
  * Summariser via backend (Gemini key stays server-side).
  */
 async function summarizeWithAI(transcript: string, apiBaseUrl: string): Promise<string> {
->>>>>>> d765a0fd55959be6a5e88700b7fcf5ae3280d7e6
   const t = transcript.trim();
   if (!t) return "No transcript text available.";
 
@@ -209,9 +205,9 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
     }
   };
 
-
   useEffect(() => {
     void loadNotes();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -269,6 +265,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
 
     if (error) throw new Error(error.message);
   };
+
   const handleRecordingAction = async () => {
     if (recordingState === "idle") {
       try {
@@ -290,6 +287,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
       try {
         const transcription = await stopBackendRecording();
         const transcriptText = transcription.text.trim();
+
         let title = transcription.title?.trim() ?? "";
         if (!title && transcriptText) {
           try {
@@ -298,9 +296,8 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
             title = transcriptText.split(/\s+/).slice(0, 6).join(" ");
           }
         }
-        if (!title) {
-          title = "New Recording";
-        }
+        if (!title) title = "New Recording";
+
         const duration = formatDuration(transcription.duration_seconds ?? durationSeconds);
 
         await createNoteInSupabase({
@@ -320,7 +317,6 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
       }
     }
   };
-
 
   const deleteSelectedNote = async () => {
     if (!selectedNote) return;
@@ -488,7 +484,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
           </div>
         </div>
 
-        {/* Layout: mobile-first 1 col, desktop becomes 3 cols */}
+        {/* Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-6">
           {/* Recording */}
           <div className="lg:col-span-2 space-y-5 sm:space-y-6">
@@ -502,7 +498,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                   disabled={recordingState === "processing" || recordingState === "complete"}
                   className={[
                     "relative rounded-full",
-                    "w-28 h-28 sm:w-44 sm:h-44", // nicer for phones
+                    "w-28 h-28 sm:w-44 sm:h-44",
                     `bg-gradient-to-br ${stateConfig.color}`,
                     "text-white shadow-2xl transition-all duration-300",
                     "disabled:opacity-70 disabled:cursor-not-allowed",
@@ -562,7 +558,6 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
 
           {/* Recent notes */}
           <div className="lg:col-span-1">
-            {/* On mobile: normal flow. On desktop: sticky sidebar */}
             <div className="bg-white rounded-2xl p-5 sm:p-6 shadow-xl border border-stone-200/50 lg:sticky lg:top-24">
               <div className="flex items-center justify-between mb-5 sm:mb-6">
                 <h3 className="text-stone-900">Recent Notes</h3>
@@ -623,7 +618,6 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                           </div>
                         </button>
 
-                        {/* quick action row (good for phones too) */}
                         <div className="px-4 pb-4">
                           <button
                             onClick={() => void summariseNoteById(note.id)}
@@ -670,7 +664,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                 "bg-white rounded-3xl shadow-2xl w-full",
                 "max-w-2xl",
                 "max-h-[92vh] sm:max-h-[85vh]",
-                "overflow-hidden", // important for sticky footer
+                "overflow-hidden",
               ].join(" ")}
             >
               {/* Header */}
@@ -722,7 +716,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                 </div>
               </div>
 
-              {/* Scrollable body */}
+              {/* Body */}
               <div className="px-4 sm:px-8 py-4 sm:py-5 overflow-y-auto max-h-[56vh] sm:max-h-[52vh]">
                 {noteTab === "transcript" && (
                   <p className="text-stone-700 leading-relaxed whitespace-pre-wrap">{selectedNote.content}</p>
@@ -734,7 +728,8 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                       selectedNote.summary
                     ) : (
                       <div className="text-stone-500">
-                        No summary yet. Click <span className="font-medium text-stone-900">Summarise</span> to generate one.
+                        No summary yet. Click <span className="font-medium text-stone-900">Summarise</span> to generate
+                        one.
                       </div>
                     )}
                   </div>
@@ -743,7 +738,7 @@ export function Dashboard({ apiBaseUrl }: DashboardProps) {
                 {summariseError && <div className="mt-3 text-sm text-red-600">{summariseError}</div>}
               </div>
 
-              {/* Sticky actions (great for phones) */}
+              {/* Actions */}
               <div className="p-4 sm:p-8 pt-3 sm:pt-4 border-t border-stone-200/60 bg-white">
                 <div className="flex flex-col sm:flex-row gap-3">
                   <button
