@@ -13,7 +13,7 @@ import {
   Power,
   Signal,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type ConnectionStatus = "connected" | "disconnected" | "connecting";
 

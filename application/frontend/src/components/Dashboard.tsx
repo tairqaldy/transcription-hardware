@@ -16,7 +16,7 @@ import {
   Zap,
   X,
 } from "lucide-react";
-import { supabase } from "../lib/supabase";
+import { supabase } from "@/lib/supabase";
 
 type RecordingState = "idle" | "recording" | "processing" | "complete" | "error";
 
