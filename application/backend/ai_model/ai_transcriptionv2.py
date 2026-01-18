@@ -1,7 +1,9 @@
+import base64
 import io
 import json
 import os
 import threading
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 
@@ -9,12 +11,15 @@ import numpy as np
 import sounddevice as sd
 import scipy.io.wavfile as wav
 from dotenv import load_dotenv
+import google.generativeai as genai
 from google.cloud.speech_v2 import SpeechClient
 from google.cloud.speech_v2.types import cloud_speech
 
+# Load backend-specific environment variables.
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"), override=True)
 
 DEFAULT_KEY_PATH = os.path.join(os.path.dirname(__file__), "google_key.json")
+# Resolve Google credentials, falling back to a local key file when needed.
 credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if credentials_path and not os.path.exists(credentials_path):
     print(f"Credentials file not found at {credentials_path}; falling back to {DEFAULT_KEY_PATH}", flush=True)
@@ -36,6 +41,22 @@ LANGUAGES = [
     if lang.strip()
 ]
 MODEL = os.getenv("TRANSCRIPTION_MODEL", "long")
+TRANSCRIPTION_CHUNK_SECONDS = int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "55"))
+
+SUMMARY_API_KEY = os.getenv("GOOGLE_SUMMARY_KEY") or os.getenv("GOOGLE_AI_API_KEY")
+SUMMARY_MODEL = os.getenv("SUMMARY_MODEL", "models/gemini-2.5-flash")
+SUMMARY_FALLBACK_MODEL = os.getenv("SUMMARY_FALLBACK_MODEL", "models/gemini-2.5-flash")
+SUMMARY_TEMPERATURE = float(os.getenv("SUMMARY_TEMPERATURE", "0.3"))
+SUMMARY_MAX_OUTPUT_TOKENS = int(os.getenv("SUMMARY_MAX_OUTPUT_TOKENS", "2400"))
+SUMMARY_CONTINUE_MAX_OUTPUT_TOKENS = int(os.getenv("SUMMARY_CONTINUE_MAX_OUTPUT_TOKENS", "800"))
+SUMMARY_CHUNK_CHARS = int(os.getenv("SUMMARY_CHUNK_CHARS", "12000"))
+TITLE_MODEL = os.getenv("TITLE_MODEL", SUMMARY_MODEL)
+TITLE_FALLBACK_MODEL = os.getenv("TITLE_FALLBACK_MODEL", SUMMARY_MODEL)
+TITLE_TEMPERATURE = float(os.getenv("TITLE_TEMPERATURE", "0.4"))
+TITLE_MAX_OUTPUT_TOKENS = int(os.getenv("TITLE_MAX_OUTPUT_TOKENS", "24"))
+
+if SUMMARY_API_KEY:
+    genai.configure(api_key=SUMMARY_API_KEY)
 
 recording_event = threading.Event()
 audio_lock = threading.Lock()
@@ -52,6 +73,7 @@ def audio_callback(indata, frames, time_info, status):
 
 
 def ensure_stream() -> None:
+    # Ensure a single active input stream for recording.
     global audio_stream
     if audio_stream is None:
         audio_stream = sd.InputStream(
@@ -64,7 +86,8 @@ def ensure_stream() -> None:
 
 
 def send_cors_headers(handler: BaseHTTPRequestHandler) -> None:
-    handler.send_header("Access-Control-Allow-Origin", "*")
+    # Allow browser-based frontend requests.
+    handler.send_header("Access-Control-Allow-Origin", "*")                 #request HTTP endpoint
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
@@ -82,7 +105,7 @@ def build_response(handler: BaseHTTPRequestHandler, status: int, payload: Dict[s
 speech_client = SpeechClient()
 
 
-def transcribe_audio(samples: np.ndarray) -> Dict[str, Any]:
+def _recognize_chunk(samples: np.ndarray) -> Dict[str, Any]:
     if samples.size == 0:
         return {"text": "", "language": None}
 
@@ -116,6 +139,351 @@ def transcribe_audio(samples: np.ndarray) -> Dict[str, Any]:
     return {"text": " ".join(transcript_parts).strip(), "language": language}
 
 
+def transcribe_audio(samples: np.ndarray) -> Dict[str, Any]:
+    # Chunk long recordings to avoid oversized STT requests.
+    if samples.size == 0:
+        return {"text": "", "language": None}
+
+    chunk_seconds = max(1, TRANSCRIPTION_CHUNK_SECONDS)
+    chunk_size = int(RATE * chunk_seconds)
+    if samples.shape[0] <= chunk_size:
+        return _recognize_chunk(samples)
+
+    transcript_parts = []
+    language = None
+    for start in range(0, samples.shape[0], chunk_size):
+        chunk = samples[start : start + chunk_size]
+        result = _recognize_chunk(chunk)
+        if result.get("text"):
+            transcript_parts.append(result["text"])
+        if language is None and result.get("language"):
+            language = result["language"]
+
+    return {"text": " ".join(transcript_parts).strip(), "language": language}
+
+
+def _extract_text(response) -> tuple[str, Optional[int]]:
+    # Extract text from genai response without relying on response.text.
+    summary_text = ""
+    finish_reason = None
+
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        finish_reason = getattr(candidate, "finish_reason", None)
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if not parts:
+            continue
+        text_parts = []
+        for part in parts:
+            text_value = getattr(part, "text", None)
+            if text_value:
+                text_parts.append(text_value)
+        if text_parts:
+            summary_text = " ".join(text_parts).strip()
+            break
+
+    return summary_text, finish_reason
+
+
+def _needs_continuation(text: str, finish_reason: Optional[int]) -> bool:
+    if not text:
+        return False
+    if finish_reason == 2:
+        return True
+    trimmed = text.rstrip().rstrip("\"'")
+    return re.search(r"[.!?]$", trimmed) is None
+
+
+def _fallback_summary_text(transcript: str, max_chars: int = 1200) -> str:
+    collapsed = " ".join(transcript.split())
+    if len(collapsed) <= max_chars:
+        return collapsed
+
+    snippet = collapsed[:max_chars]
+    last_stop = max(snippet.rfind(". "), snippet.rfind("! "), snippet.rfind("? "))
+    if last_stop > 120:
+        return snippet[: last_stop + 1].strip()
+    return snippet.rstrip() + "..."
+
+
+def _split_transcript(text: str, max_chars: int) -> list[str]:
+    if len(text) <= max_chars:
+        return [text]
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    chunks = []
+    current = []
+    current_len = 0
+
+    for sentence in sentences:
+        if not sentence:
+            continue
+        sentence_len = len(sentence)
+
+        if sentence_len > max_chars:
+            if current:
+                chunks.append(" ".join(current).strip())
+                current = []
+                current_len = 0
+            for i in range(0, sentence_len, max_chars):
+                chunks.append(sentence[i : i + max_chars].strip())
+            continue
+
+        if current_len + sentence_len + 1 > max_chars and current:
+            chunks.append(" ".join(current).strip())
+            current = [sentence]
+            current_len = sentence_len
+        else:
+            current.append(sentence)
+            current_len += sentence_len + 1
+
+    if current:
+        chunks.append(" ".join(current).strip())
+
+    return [chunk for chunk in chunks if chunk]
+
+
+def _generate_text_with_model(
+    prompt: str,
+    model_name: str,
+    temperature: float,
+    max_output_tokens: int,
+) -> tuple[str, Optional[int]]:
+    model = genai.GenerativeModel(model_name)
+    response = model.generate_content(
+        prompt,
+        generation_config={
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+        },
+    )
+    return _extract_text(response)
+
+
+def summarize_transcript(transcript: str) -> str:
+    # Summarize transcript with chunking and fallbacks.
+    if not SUMMARY_API_KEY:
+        raise ValueError("Missing GOOGLE_SUMMARY_KEY for summarization.")
+
+    text = transcript.strip()
+    if not text:
+        return ""
+
+    chunks = _split_transcript(text, max(1000, SUMMARY_CHUNK_CHARS))
+    chunk_summaries = []
+    finish_reason = None
+
+    if len(chunks) > 1:
+        for idx, chunk in enumerate(chunks, start=1):
+            chunk_prompt = (
+                "Write a detailed FeedPulse-style paragraph (5-7 sentences) that captures this section clearly. "
+                "Aim for roughly 80-120 words. Use natural narrative sentences like the examples: context, "
+                "discussion points, decisions, responsibilities, challenges, and any numbers or dates. "
+                "Preserve specific tools, components, or features mentioned. Do not add labels, headings, "
+                "bullets, or commentary. End with a complete final sentence.\\n\\n"
+                f"Section {idx}:\\n{chunk}"
+            )
+            chunk_text, finish_reason = _generate_text_with_model(
+                chunk_prompt,
+                SUMMARY_MODEL,
+                SUMMARY_TEMPERATURE,
+                SUMMARY_MAX_OUTPUT_TOKENS,
+            )
+            if not chunk_text and SUMMARY_FALLBACK_MODEL and SUMMARY_FALLBACK_MODEL != SUMMARY_MODEL:
+                chunk_text, finish_reason = _generate_text_with_model(
+                    chunk_prompt,
+                    SUMMARY_FALLBACK_MODEL,
+                    SUMMARY_TEMPERATURE,
+                    SUMMARY_MAX_OUTPUT_TOKENS,
+                )
+            if not chunk_text:
+                chunk_text = _fallback_summary_text(chunk, max_chars=400)
+            chunk_summaries.append(chunk_text)
+
+        combined = " ".join(chunk_summaries).strip()
+        prompt = (
+            "Write a FeedPulse reflection in 3-5 paragraphs, similar in tone and structure to the examples. "
+            "Target roughly 180-280 words and avoid being too short. Use natural, complete sentences and a "
+            "cohesive narrative.\\n"
+            "Paragraph 1: clear intro about the meeting/session (context, purpose, overall tone).\\n"
+            "Paragraph 2-3: detailed discussion with concrete points, decisions, responsibilities, constraints, "
+            "and specific tools/components/features mentioned. Include numbers, dates, and targets when present.\\n"
+            "Paragraph 4-5 (if needed): wrap up with key takeaways, challenges, and clear next steps.\\n"
+            "Do not add labels, headings, bullets, or commentary. Avoid listing attendees unless essential. "
+            "End with a complete final sentence.\\n\\n"
+            f"Notes:\\n{combined}"
+        )
+    else:
+        prompt = (
+            "Write a FeedPulse reflection in 3-5 paragraphs, similar in tone and structure to the examples. "
+            "Target roughly 180-280 words and avoid being too short. Use natural, complete sentences and a "
+            "cohesive narrative.\\n"
+            "Paragraph 1: clear intro about the meeting/session (context, purpose, overall tone).\\n"
+            "Paragraph 2-3: detailed discussion with concrete points, decisions, responsibilities, constraints, "
+            "and specific tools/components/features mentioned. Include numbers, dates, and targets when present.\\n"
+            "Paragraph 4-5 (if needed): wrap up with key takeaways, challenges, and clear next steps.\\n"
+            "Do not add labels, headings, bullets, or commentary. Avoid listing attendees unless essential. "
+            "End with a complete final sentence.\\n\\n"
+            f"Transcript:\\n{text}"
+        )
+
+    summary_text, finish_reason = _generate_text_with_model(
+        prompt,
+        SUMMARY_MODEL,
+        SUMMARY_TEMPERATURE,
+        SUMMARY_MAX_OUTPUT_TOKENS,
+    )
+
+    if not summary_text and SUMMARY_FALLBACK_MODEL and SUMMARY_FALLBACK_MODEL != SUMMARY_MODEL:
+        summary_text, finish_reason = _generate_text_with_model(
+            prompt,
+            SUMMARY_FALLBACK_MODEL,
+            SUMMARY_TEMPERATURE,
+            SUMMARY_MAX_OUTPUT_TOKENS,
+        )
+
+    if summary_text and _needs_continuation(summary_text, finish_reason):
+        continuation_prompt = (
+            "Continue the summary below from where it ended. Do not repeat sentences. "
+            "Keep the same FeedPulse style and paragraphing. End with a complete final sentence.\\n\\n"
+            f"Summary so far:\\n{summary_text}"
+        )
+        continuation_text, finish_reason = _generate_text_with_model(
+            continuation_prompt,
+            SUMMARY_MODEL,
+            SUMMARY_TEMPERATURE,
+            SUMMARY_CONTINUE_MAX_OUTPUT_TOKENS,
+        )
+        if not continuation_text and SUMMARY_FALLBACK_MODEL and SUMMARY_FALLBACK_MODEL != SUMMARY_MODEL:
+            continuation_text, finish_reason = _generate_text_with_model(
+                continuation_prompt,
+                SUMMARY_FALLBACK_MODEL,
+                SUMMARY_TEMPERATURE,
+                SUMMARY_CONTINUE_MAX_OUTPUT_TOKENS,
+            )
+        if continuation_text:
+            summary_text = f"{summary_text.rstrip()} {continuation_text.strip()}"
+
+    if not summary_text:
+        reason = f"finish_reason={finish_reason}" if finish_reason is not None else "finish_reason=unknown"
+        print(f"Summary returned no text ({reason}); using fallback summary.", flush=True)
+        return _fallback_summary_text(text)
+
+    return summary_text
+
+
+def _fallback_title_text(transcript: str, max_words: int = 12) -> str:
+    if not transcript:
+        return "New Recording"
+
+    first_sentence = re.split(r"(?<=[.!?])\s+", transcript.strip(), maxsplit=1)[0]
+    words = first_sentence.split()
+    if not words:
+        return "New Recording"
+    return " ".join(words[:max_words])
+
+
+def generate_title(transcript: str) -> str:
+    # Create a short title from the transcript text.
+    text = transcript.strip()
+    if not text:
+        return "New Recording"
+
+    if not SUMMARY_API_KEY:
+        return _fallback_title_text(text)
+
+    prompt = (
+        "Write one short sentence (8-12 words) that summarizes the transcript. "
+        "Use sentence case, avoid names unless essential, and no quotes, labels, or trailing punctuation.\n\n"
+        f"Transcript:\n{text}"
+    )
+
+    title_text, finish_reason = _generate_text_with_model(
+        prompt,
+        TITLE_MODEL,
+        TITLE_TEMPERATURE,
+        TITLE_MAX_OUTPUT_TOKENS,
+    )
+
+    if not title_text and TITLE_FALLBACK_MODEL and TITLE_FALLBACK_MODEL != TITLE_MODEL:
+        fallback_prompt = (
+            "Create a short neutral title (6-10 words) for this meeting transcript. "
+            "Do not include names. Return only the title text with no quotes or trailing punctuation.\n\n"
+            f"Transcript:\n{text}"
+        )
+        title_text, finish_reason = _generate_text_with_model(
+            fallback_prompt,
+            TITLE_FALLBACK_MODEL,
+            TITLE_TEMPERATURE,
+            TITLE_MAX_OUTPUT_TOKENS,
+        )
+
+    if not title_text:
+        reason = f"finish_reason={finish_reason}" if finish_reason is not None else "finish_reason=unknown"
+        print(f"Title returned no text ({reason}); using fallback title.", flush=True)
+        return _fallback_title_text(text)
+
+    cleaned = " ".join(title_text.split()).strip().strip("\"'").rstrip(".!?")
+    return cleaned or _fallback_title_text(text)
+
+
+def _decode_audio_chunks(
+    chunks: list[Any],
+    sample_rate: Optional[int],
+    bits_per_sample: Optional[int],
+    channels: Optional[int],
+) -> tuple[np.ndarray, int]:
+    if bits_per_sample is not None and int(bits_per_sample) != 16:
+        raise ValueError("Only 16-bit PCM audio is supported.")
+
+    raw_parts: list[bytes] = []
+    for chunk in chunks:
+        if isinstance(chunk, str):
+            raw_parts.append(base64.b64decode(chunk))
+            continue
+        if isinstance(chunk, dict):
+            audio_data = chunk.get("audio_data") or chunk.get("data")
+            if not audio_data:
+                raise ValueError("Chunk missing audio_data.")
+            if sample_rate is None:
+                sample_rate = chunk.get("sample_rate_hz") or chunk.get("sample_rate")
+            if bits_per_sample is None:
+                bits_per_sample = chunk.get("bits_per_sample")
+            if channels is None:
+                channels = chunk.get("channels")
+            raw_parts.append(base64.b64decode(audio_data))
+            continue
+        raise ValueError("Invalid chunk entry; expected base64 string or object.")
+
+    resolved_rate = int(sample_rate) if sample_rate else RATE
+    if resolved_rate != RATE:
+        raise ValueError(f"Sample rate mismatch. Expected {RATE}, got {resolved_rate}.")
+
+    audio_bytes = b"".join(raw_parts)
+    samples = np.frombuffer(audio_bytes, dtype=np.int16)
+    channel_count = int(channels) if channels else 1
+    if channel_count > 1:
+        frame_count = samples.size // channel_count
+        if frame_count == 0:
+            return samples[:0], resolved_rate
+        samples = samples[: frame_count * channel_count].reshape(frame_count, channel_count)
+        samples = samples.mean(axis=1).astype(np.int16)
+
+    return samples, resolved_rate
+
+
+def list_summary_models() -> list[str]:
+    if not SUMMARY_API_KEY:
+        raise ValueError("Missing GOOGLE_SUMMARY_KEY for summarization.")
+
+    models = []
+    for model in genai.list_models():
+        if "generateContent" in getattr(model, "supported_generation_methods", []):
+            models.append(model.name)
+    return models
+
+
 class TranscriptionHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -129,6 +497,14 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
                 200,
                 {"ok": True, "recording": recording_event.is_set()},
             )
+            return
+        if self.path == "/summary/models":
+            try:
+                models = list_summary_models()
+            except Exception as exc:
+                build_response(self, 500, {"error": str(exc)})
+                return
+            build_response(self, 200, {"models": models})
             return
         build_response(self, 404, {"error": "Not found"})
 
@@ -160,8 +536,105 @@ class TranscriptionHandler(BaseHTTPRequestHandler):
                 build_response(self, 500, {"error": str(exc)})
                 return
 
+            try:
+                result["title"] = generate_title(result.get("text", ""))
+            except Exception as exc:
+                result["title"] = "New Recording"
+                print(f"Title generation failed: {exc}", flush=True)
+
             result["duration_seconds"] = duration_seconds
             build_response(self, 200, result)
+            return
+
+        if self.path == "/transcribe/chunks":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except json.JSONDecodeError:
+                build_response(self, 400, {"error": "Invalid JSON payload"})
+                return
+
+            chunks = payload.get("chunks") or payload.get("audio_chunks")
+            if not isinstance(chunks, list) or not chunks:
+                build_response(self, 400, {"error": "Payload must include non-empty chunks list"})
+                return
+
+            try:
+                samples, resolved_rate = _decode_audio_chunks(
+                    chunks,
+                    payload.get("sample_rate_hz") or payload.get("sample_rate"),
+                    payload.get("bits_per_sample"),
+                    payload.get("channels"),
+                )
+            except Exception as exc:
+                build_response(self, 400, {"error": str(exc)})
+                return
+
+            if samples.size == 0:
+                build_response(self, 400, {"error": "No audio samples decoded"})
+                return
+
+            try:
+                result = transcribe_audio(samples)
+            except Exception as exc:
+                build_response(self, 500, {"error": str(exc)})
+                return
+
+            try:
+                result["title"] = generate_title(result.get("text", ""))
+            except Exception as exc:
+                result["title"] = "New Recording"
+                print(f"Title generation failed: {exc}", flush=True)
+
+            result["duration_seconds"] = float(len(samples) / resolved_rate)
+            build_response(self, 200, result)
+            return
+
+        if self.path == "/summarize":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except json.JSONDecodeError:
+                build_response(self, 400, {"error": "Invalid JSON payload"})
+                return
+
+            transcript = payload.get("transcript", "")
+            if not isinstance(transcript, str):
+                build_response(self, 400, {"error": "Transcript must be a string"})
+                return
+
+            try:
+                summary = summarize_transcript(transcript)
+            except Exception as exc:
+                build_response(self, 500, {"error": str(exc)})
+                return
+
+            build_response(self, 200, {"summary": summary})
+            return
+
+        if self.path == "/title":
+            length = int(self.headers.get("Content-Length", "0"))
+            raw = self.rfile.read(length) if length else b"{}"
+            try:
+                payload = json.loads(raw.decode("utf-8"))
+            except json.JSONDecodeError:
+                build_response(self, 400, {"error": "Invalid JSON payload"})
+                return
+
+            transcript = payload.get("transcript", "")
+            if not isinstance(transcript, str):
+                build_response(self, 400, {"error": "Transcript must be a string"})
+                return
+
+            try:
+                title = generate_title(transcript)
+            except Exception as exc:
+                build_response(self, 500, {"error": str(exc)})
+                return
+
+            build_response(self, 200, {"title": title})
             return
 
         build_response(self, 404, {"error": "Not found"})
