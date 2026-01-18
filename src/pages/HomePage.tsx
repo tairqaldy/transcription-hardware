@@ -1,8 +1,6 @@
+import { useMemo } from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
-import { useEffect, useMemo, useState } from "react";
-import { supabase } from "../lib/supabase";
-
 import {
   Mic,
   Zap,
@@ -11,7 +9,9 @@ import {
   ArrowRight,
   Check,
   Star,
+  Users,
   Shield,
+  ChevronRight,
   Play,
 } from "lucide-react";
 
@@ -20,26 +20,6 @@ const CORAL = "#FF8A6D";
 
 export function Home() {
   const navigate = useNavigate();
-const [isAuthed, setIsAuthed] = useState(false);
-
-useEffect(() => {
-  let mounted = true;
-
-  supabase.auth.getSession().then(({ data }) => {
-    if (!mounted) return;
-    setIsAuthed(!!data.session);
-  });
-
-  const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
-    if (!mounted) return;
-    setIsAuthed(!!session);
-  });
-
-  return () => {
-    mounted = false;
-    sub.subscription.unsubscribe();
-  };
-}, []);
 
   const features = useMemo(
     () => [
@@ -76,18 +56,20 @@ useEffect(() => {
       {
         name: "Sarah Chen",
         content:
-          "This recording device changed how I study. I focus on understanding lectures instead of writing nonstop.",
+          "NoteNecklace changed how I study. I focus on understanding lectures instead of writing nonstop.",
         rating: 5,
       },
       {
         name: "Marcus Johnson",
         content:
-          "A game changer for meetings. I never miss action items anymore.",
+          "A game-changer for meetings. I never miss action items anymore.",
         rating: 5,
       },
       {
         name: "Emma Rodriguez",
-        content: "The accuracy is incredible. I get perfect quotes every time.",
+
+        content:
+          "The accuracy is incredible. I get perfect quotes every time.",
         rating: 5,
       },
     ],
@@ -141,7 +123,10 @@ useEffect(() => {
 
             <h1 className="text-6xl font-bold text-stone-900 mb-6 leading-tight">
               Never miss a{" "}
-              <span className="bg-clip-text text-transparent" style={gradient}>
+              <span
+                className="bg-clip-text text-transparent"
+                style={gradient}
+              >
                 word
               </span>{" "}
               again
@@ -155,7 +140,7 @@ useEffect(() => {
             <div className="flex flex-wrap gap-4 mb-8">
               <motion.button
                 whileHover={{ scale: 1.05 }}
-                onClick={() => navigate(isAuthed ? "/dashboard" : "/signup")}
+                onClick={() => navigate("/dashboard")}
                 className="px-8 py-4 rounded-xl text-white font-semibold shadow-xl flex items-center gap-2"
                 style={gradient}
               >
@@ -204,7 +189,11 @@ useEffect(() => {
                     className="w-1 rounded-full"
                     style={gradient}
                     animate={{ height: ["20%", "100%", "30%"] }}
-                    transition={{ duration: 1, repeat: Infinity, delay: i * 0.05 }}
+                    transition={{
+                      duration: 1,
+                      repeat: Infinity,
+                      delay: i * 0.05,
+                    }}
                   />
                 ))}
               </div>
@@ -250,7 +239,9 @@ useEffect(() => {
                   >
                     <Icon className="text-white" />
                   </div>
-                  <h3 className="font-semibold text-stone-900 mb-2">{f.title}</h3>
+                  <h3 className="font-semibold text-stone-900 mb-2">
+                    {f.title}
+                  </h3>
                   <p className="text-stone-600 text-sm">{f.description}</p>
                 </motion.div>
               );
@@ -270,7 +261,9 @@ useEffect(() => {
                 </div>
                 <p className="text-stone-700 mb-6">“{t.content}”</p>
                 <div className="flex gap-3 items-center">
-                  <div className="font-semibold">{t.name}</div>
+                  <div>
+                    <div className="font-semibold">{t.name}</div>
+                  </div>
                 </div>
               </div>
             ))}
@@ -282,11 +275,13 @@ useEffect(() => {
           <h2 className="text-5xl font-bold mb-6">
             Ready to transform how you take notes?
           </h2>
-          <p className="text-stone-300 mb-10">Start your free trial today.</p>
+          <p className="text-stone-300 mb-10">
+            Start your free trial today.
+          </p>
 
           <motion.button
             whileHover={{ scale: 1.05 }}
-            onClick={() => navigate("/about")}
+            onClick={() => navigate("/dashboard")}
             className="px-10 py-5 rounded-xl font-semibold shadow-xl"
             style={gradient}
           >
