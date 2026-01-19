@@ -1,0 +1,5 @@
+Adafruit_NeoPixel
+ArduinoJson
+ESP_Async_WebServer
+ESPSupabase
+WebSockets
