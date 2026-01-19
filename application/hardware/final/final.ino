@@ -2,6 +2,9 @@
 #include <Adafruit_NeoPixel.h>
 #include <driver/i2s.h>
 #include <ESPSupabase.h>
+#include <FS.h>
+#include <SD.h>
+#include <SPI.h>
 
 // --- Configuration ---
 const char* ssid = "Samsung Smart Fridge";
@@ -12,53 +15,52 @@ const char* supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 #define BUTTON_PIN 13
 #define LED_PIN    27
 #define NUMPIXELS  3
-
-// Audio Buffer (Holds ~1 second of 16kHz 16-bit audio)
-// 16000 samples * 2 bytes = 32000 bytes
-const size_t RECORD_SIZE = 32000; 
-uint8_t audioData[RECORD_SIZE];
-size_t audioPtr = 0;
+#define SD_CS      5
 
 Adafruit_NeoPixel pixels(NUMPIXELS, LED_PIN, NEO_GRB + NEO_KHZ800);
 Supabase supabase;
 
 bool isRecording = false;
+bool isUploading = false;
 String currentSessionId = "";
-int chunkSequence = 0;
+File recFile;
 
-// Function Prototypes
+// --- Function Prototypes ---
 void handleButton();
 void captureAudio();
-void sendToSupabase();
+void uploadTask(void * pvParameters);
+void uploadFileToSupabase(String fileName);
 void showIdlePattern();
 void setupI2S();
-String base64Encode(uint8_t* data, size_t length);
+void writeWavHeader(File file, int totalDataSize);
+String generateUUID();
 
 void setup() {
   Serial.begin(115200);
   
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP); 
+  
   pixels.begin();
   pixels.setBrightness(40); 
   
-  // WiFi Connection with Visual Feedback
+  if (!SD.begin(SD_CS)) {
+    Serial.println("SD Error!");
+    while(1) { pixels.setPixelColor(1, pixels.Color(255,0,0)); pixels.show(); delay(500); }
+  }
+
   WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
+  Serial.print("Connecting WiFi");
   while (WiFi.status() != WL_CONNECTED) {
-    pixels.setPixelColor(0, pixels.Color(255, 0, 0)); // Red flash
-    pixels.show();
-    delay(250);
-    pixels.clear();
-    pixels.show();
-    delay(250);
-    Serial.println(".");
+    delay(500);
+    Serial.print(".");
   }
   Serial.println("\nWiFi Connected!");
 
   supabase.begin(supabaseUrl, supabaseKey);
   setupI2S();
   
-  // System Ready Glow (Green flash)
+  // Ready signal
   for(int i=0; i<3; i++) pixels.setPixelColor(i, pixels.Color(0, 255, 0));
   pixels.show();
   delay(500);
@@ -69,48 +71,42 @@ void loop() {
 
   if (isRecording) {
     captureAudio();
-  } else {
+  } else if (!isUploading) {
     showIdlePattern();
   }
 }
 
-String generateUUID() {
-  String uuid = "";
-  for (int i = 0; i < 32; i++) {
-    const char *hex = "0123456789abcdef";
-    uuid += hex[random(0, 16)];
-    if (i == 7 || i == 11 || i == 15 || i == 19) uuid += "-";
-  }
-  return uuid;
-}
-
 void handleButton() {
   static bool lastBtnState = HIGH;
-  static unsigned long lastDebounceTime = 0;
   bool reading = digitalRead(BUTTON_PIN);
 
-  if (reading != lastBtnState) {
-    lastDebounceTime = millis();
-  }
-
-  if ((millis() - lastDebounceTime) > 50) { // 50ms debounce
-    if (reading == LOW && !isRecording) {
-      // Start Recording
-      isRecording = true;
-      chunkSequence = 0;
-      audioPtr = 0;
-      
-      // We still need a valid UUID for the audio_chunks table
-      currentSessionId = generateUUID(); 
-      
-      Serial.println("Recording Started. UUID: " + currentSessionId);
-      delay(300); 
+  // Detect a state change (Pressing down)
+  if (reading == LOW && lastBtnState == HIGH) {
+    delay(50); // Simple debounce
+    
+    if (!isRecording && !isUploading) {
+      // START
+      currentSessionId = generateUUID();
+      String path = "/rec_" + currentSessionId + ".wav";
+      recFile = SD.open(path, FILE_WRITE);
+      if (recFile) {
+        uint8_t header[44] = {0};
+        recFile.write(header, 44);
+        isRecording = true;
+        Serial.println("RECORDING START");
+      }
     } 
-    else if (reading == LOW && isRecording) {
-      // Stop Recording
+    else if (isRecording) {
+      // STOP
       isRecording = false;
-      Serial.println("Recording Stopped.");
-      delay(300);
+      int fileSize = recFile.size();
+      recFile.seek(0);
+      writeWavHeader(recFile, fileSize - 44);
+      recFile.close();
+      Serial.println("RECORDING STOP");
+      
+      isUploading = true;
+      xTaskCreate(uploadTask, "UploadTask", 10000, NULL, 1, NULL);
     }
   }
   lastBtnState = reading;
@@ -119,84 +115,53 @@ void handleButton() {
 void captureAudio() {
   size_t bytes_read;
   uint8_t tempBuffer[512];
-  i2s_read(I2S_NUM_0, tempBuffer, sizeof(tempBuffer), &bytes_read, portMAX_DELAY);
+  
+  // Change portMAX_DELAY to 0 so it doesn't block the button check!
+  i2s_read(I2S_NUM_0, tempBuffer, sizeof(tempBuffer), &bytes_read, 0); 
 
-  if (bytes_read > 0) {
-    // Volume-Reactive Green LEDs
+  if (isRecording && recFile && bytes_read > 0) {
+    recFile.write(tempBuffer, bytes_read);
+    
+    // Quick visual feedback
     int16_t sample = (tempBuffer[1] << 8) | tempBuffer[0];
     int vol = abs(sample) >> 6;
-    for(int i=0; i<3; i++) pixels.setPixelColor(i, pixels.Color(0, constrain(vol, 30, 255), 0));
+    pixels.setPixelColor(1, pixels.Color(0, constrain(vol, 30, 255), 0));
     pixels.show();
-
-    // Fill the Buffer
-    if (audioPtr + bytes_read < RECORD_SIZE) {
-      memcpy(audioData + audioPtr, tempBuffer, bytes_read);
-      audioPtr += bytes_read;
-    } else {
-      // Buffer full: push to cloud
-      sendToSupabase();
-      audioPtr = 0; 
-    }
   }
 }
 
-
-void sendToSupabase() {
-  if (currentSessionId == "") return;
-
-  chunkSequence++;
-  String base64Audio = base64Encode(audioData, audioPtr);
-  
-  // 1. Calculate the 'metadata' your table requires
-  // Your table has a CHECK constraint: data_size_bytes MUST be > 0
-  int dataSize = audioPtr; 
-  
-  // Your duration calculation: (Total Bytes / 2 bytes per sample) / 16000 samples per sec
-  float duration = (float)(dataSize / 2.0) / 16000.0;
-
-  // 2. Build the JSON with the specific columns your SQL code defined
-  String jsonData = "{";
-  jsonData += "\"device_id\":\"4dbdd7cc-17b9-42c1-8965-bf9709a56c0f\",";
-  jsonData += "\"session_id\":\"" + currentSessionId + "\","; 
-  jsonData += "\"chunk_sequence\":" + String(chunkSequence) + ",";
-  jsonData += "\"audio_data\":\"" + base64Audio + "\",";
-  jsonData += "\"data_size_bytes\":" + String(dataSize) + ","; // Required by your constraint
-  jsonData += "\"duration_seconds\":" + String(duration, 2) + ",";
-  jsonData += "\"sample_rate\":16000,";
-  jsonData += "\"bits_per_sample\":16,";
-  jsonData += "\"channels\":1";
-  jsonData += "}";
-  
-  // 3. Send to Supabase
-  int httpCode = supabase.insert("audio_chunks", jsonData, false);
-  Serial.print("Supabase Status: ");
-  Serial.println(httpCode);
+void uploadTask(void * pvParameters) {
+    String fileName = "/rec_" + currentSessionId + ".wav";
+    uploadFileToSupabase(fileName);
+    isUploading = false; 
+    vTaskDelete(NULL);
 }
 
-void showIdlePattern() {
-  // Breathing Blue pattern
-  float val = (exp(sin(millis() / 2000.0 * PI)) - 0.36787944) * 108.0;
-  for(int i=0; i<3; i++) pixels.setPixelColor(i, pixels.Color(0, 0, val));
+void uploadFileToSupabase(String fileName) {
+  File file = SD.open(fileName, FILE_READ);
+  if (!file) return;
+
+  uint32_t fileSize = file.size();
+  String remotePath = fileName.substring(1); 
+
+  // Blue for Upload
+  for(int i=0; i<3; i++) pixels.setPixelColor(i, pixels.Color(0, 0, 255));
   pixels.show();
+
+  int status = supabase.upload("audio", remotePath, "application/octet-stream", (Stream*)&file, fileSize);
+  Serial.print("Supabase Return: ");
+  Serial.println(status);
+
+  file.close();
 }
 
-String base64Encode(uint8_t* data, size_t length) {
-  const char base64_chars[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  String encoded = "";
-  encoded.reserve(((length + 2) / 3) * 4 + 1); 
-
-  for (size_t i = 0; i < length; i += 3) {
-    uint32_t octet_a = data[i];
-    uint32_t octet_b = (i + 1 < length) ? data[i + 1] : 0;
-    uint32_t octet_c = (i + 2 < length) ? data[i + 2] : 0;
-    uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
-
-    encoded += base64_chars[(triple >> 18) & 0x3F];
-    encoded += base64_chars[(triple >> 12) & 0x3F];
-    encoded += (i + 1 < length) ? base64_chars[(triple >> 6) & 0x3F] : '=';
-    encoded += (i + 2 < length) ? base64_chars[triple & 0x3F] : '=';
+String generateUUID() {
+  String uuid = "";
+  for (int i = 0; i < 16; i++) {
+    const char *hex = "0123456789abcdef";
+    uuid += hex[random(0, 16)];
   }
-  return encoded;
+  return uuid;
 }
 
 void setupI2S() {
@@ -213,4 +178,36 @@ void setupI2S() {
   i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
   i2s_pin_config_t pins = {.bck_io_num = 33, .ws_io_num = 25, .data_out_num = -1, .data_in_num = 32};
   i2s_set_pin(I2S_NUM_0, &pins);
+}
+
+void writeWavHeader(File file, int totalDataSize) {
+  int sampleRate = 16000;
+  int bitsPerSample = 16;
+  int channels = 1;
+  int byteRate = sampleRate * channels * bitsPerSample / 8;
+  uint8_t header[44];
+  memcpy(header, "RIFF", 4);
+  int fileSize = totalDataSize + 36;
+  memcpy(header + 4, &fileSize, 4);
+  memcpy(header + 8, "WAVE", 4);
+  memcpy(header + 12, "fmt ", 4);
+  int fmtSize = 16;
+  memcpy(header + 16, &fmtSize, 4);
+  int16_t audioFormat = 1;
+  memcpy(header + 20, &audioFormat, 2);
+  memcpy(header + 22, &channels, 2);
+  memcpy(header + 24, &sampleRate, 4);
+  memcpy(header + 28, &byteRate, 4);
+  int16_t blockAlign = channels * bitsPerSample / 8;
+  memcpy(header + 32, &blockAlign, 2);
+  memcpy(header + 34, &bitsPerSample, 2);
+  memcpy(header + 36, "data", 4);
+  memcpy(header + 40, &totalDataSize, 4);
+  file.write(header, 44);
+}
+
+void showIdlePattern() {
+  float val = (exp(sin(millis() / 2000.0 * PI)) - 0.36787944) * 108.0;
+  for(int i=0; i<3; i++) pixels.setPixelColor(i, pixels.Color(0, 0, val));
+  pixels.show();
 }
