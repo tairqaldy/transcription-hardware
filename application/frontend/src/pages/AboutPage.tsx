@@ -7,7 +7,7 @@ export function AboutPage() {
       icon: Mic2,
       title: "Wear & Record",
       description:
-        "Simply wear your NoteNecklace and tap to start recording. The built-in microphones capture clear audio in any environment.",
+        "Simply tap to start recording. The built-in microphones capture clear audio in any environment.",
       color: "from-[var(--color-peach)] to-[var(--color-coral)]",
       gradient: "from-[var(--color-peach)]/18 to-[var(--color-coral)]/18",
     },
@@ -81,7 +81,7 @@ export function AboutPage() {
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-gradient-to-r from-[var(--color-peach)] to-[var(--color-coral)] text-white shadow-lg mb-8"
           >
             <Sparkles className="w-4 h-4" />
-            <span className="text-sm font-semibold">About NoteNecklace</span>
+            <span className="text-sm font-semibold">About Nothing</span>
           </motion.div>
 
           <motion.h1
@@ -103,7 +103,7 @@ export function AboutPage() {
             transition={{ delay: 0.3 }}
             className="text-xl text-stone-600 max-w-2xl mx-auto leading-relaxed"
           >
-            NoteNecklace transforms your voice into accurate, searchable text notes—so you can focus on what matters most.
+            "Nothing" transforms your voice into accurate, searchable text notes—so you can focus on what matters most.
           </motion.p>
         </motion.div>
 
@@ -205,7 +205,7 @@ export function AboutPage() {
           </motion.button>
 
           <p className="mt-6 text-stone-600">
-            Ready to transform how you take notes? Your NoteNecklace is waiting.
+            Ready to transform how you take notes?
           </p>
         </motion.div>
       </div>

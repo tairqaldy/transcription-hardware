@@ -1,4 +1,4 @@
-import { Settings } from "./Settings"; // if you saved Settings in src/pages/Settings.tsx
+import { Settings } from "@/pages/Settings";
 
 export function SettingsPage() {
   return <Settings />;
