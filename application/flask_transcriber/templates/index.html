@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ESP32 Audio Transcription</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="header">
+        <h1>ESP32 Audio Transcription Demo</h1>
+        <p>Pulls audio from Supabase storage and transcribes with Google Speech-to-Text.</p>
+      </header>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="alerts">
+            {% for category, message in messages %}
+              <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </section>
+        {% endif %}
+      {% endwith %}
+
+      <section class="card">
+        <h2>Audio Files</h2>
+        {% if files %}
+          <table class="files">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Size</th>
+                <th>Updated</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for file in files %}
+                <tr>
+                  <td>{{ file["name"] }}</td>
+                  <td>{{ file["size"] or "-" }}</td>
+                  <td>{{ file["updated_at"] or "-" }}</td>
+                  <td>
+                    <form method="post" action="{{ url_for('transcribe') }}" class="inline">
+                      <input type="hidden" name="file_name" value="{{ file["name"] }}" />
+                      <button type="submit">Transcribe</button>
+                    </form>
+                    {% if file["public_url"] %}
+                      <a class="link" href="{{ file["public_url"] }}" target="_blank" rel="noreferrer">
+                        View
+                      </a>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p>No audio files found in the bucket.</p>
+        {% endif %}
+      </section>
+
+      {% if transcript %}
+        <section class="card">
+          <h2>Transcript</h2>
+          <p class="muted">File: {{ transcript_file }}</p>
+          <pre class="transcript">{{ transcript }}</pre>
+          <form method="post" action="{{ url_for('summarize') }}" class="summary-form">
+            <input type="hidden" name="file_name" value="{{ transcript_file }}" />
+            <textarea name="transcript" hidden>{{ transcript }}</textarea>
+            <button type="submit">Summarize</button>
+          </form>
+        </section>
+      {% endif %}
+
+      {% if summary %}
+        <section class="card">
+          <h2>Summary</h2>
+          <pre class="transcript">{{ summary }}</pre>
+        </section>
+      {% endif %}
+    </main>
+  </body>
+</html>
